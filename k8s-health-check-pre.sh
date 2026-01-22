@@ -10,6 +10,9 @@
 
 set -o pipefail
 
+# Preserve PATH from parent shell
+export PATH="${PATH}"
+
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -24,6 +27,25 @@ source "${SCRIPT_DIR}/lib/scp.sh"
 for section in "${SCRIPT_DIR}"/lib/sections/*.sh; do
     source "${section}"
 done
+
+#===============================================================================
+# Prerequisite Checks
+#===============================================================================
+
+# Check if kubectl is available
+if ! command_exists kubectl; then
+    error "kubectl command not found in PATH"
+    error "Please ensure kubectl is installed and available in your PATH"
+    error "Current PATH: ${PATH}"
+    exit 1
+fi
+
+# Check if tanzu CLI is available
+if ! command_exists tanzu; then
+    error "tanzu CLI not found in PATH"
+    error "Please ensure tanzu CLI is installed and available in your PATH"
+    exit 1
+fi
 
 #===============================================================================
 # Usage Function

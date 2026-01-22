@@ -10,6 +10,9 @@
 
 set -o pipefail
 
+# Preserve PATH from parent shell
+export PATH="${PATH}"
+
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
