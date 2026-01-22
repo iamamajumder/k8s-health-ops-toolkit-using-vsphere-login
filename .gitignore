@@ -1,0 +1,45 @@
+# Health Check Output Files
+output/
+*.output
+*-health-check-pre.output
+*-health-check-post.output
+*-health-check-comparison.txt
+
+# Kubeconfig Files (NEVER commit these!)
+*.kubeconfig
+kubeconfig-*
+kubeconfig_*
+
+# TMC Cache Files
+/tmp/k8s-health-check-cluster-cache-*.txt
+
+# Sensitive Configuration (if you have custom configs)
+*.credentials
+*.secret
+*.key
+*.pem
+
+# Environment Variables
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Temporary Files
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# IDE Files
+.vscode/
+.idea/
+*.code-workspace
+
+# Backup Files
+*.bak
+*.backup

@@ -1,0 +1,66 @@
+K8s Health Check v3.1 - Cleanup Summary
+========================================
+Date: 2025-01-22
+
+CONSOLIDATION COMPLETED
+=======================
+
+Files Consolidated:
+-------------------
+1. K8S-HEALTH-CHECK-README.md
+   - Kept: K8S-HEALTH-CHECK-README.md (v3.1)
+   - Archived: archive_v3.0/K8S-HEALTH-CHECK-README-v3.0.md
+
+2. MIGRATION-GUIDE.md
+   - Kept: MIGRATION-GUIDE.md (v3.0 → v3.1 guide)
+   - Archived: archive_v3.0/MIGRATION-GUIDE-V3.md (v2.0 → v3.0 guide)
+
+3. PROJECT-STRUCTURE.txt
+   - Kept: PROJECT-STRUCTURE.txt (v3.1 structure)
+   - Archived: archive_v3.0/PROJECT-STRUCTURE.txt (v3.0 structure)
+
+Current Project Structure:
+--------------------------
+Main Scripts:
+  k8s-health-check-pre.sh
+  k8s-health-check-post.sh
+  clusters.conf
+
+Library Modules:
+  lib/common.sh
+  lib/config.sh
+  lib/tmc-context.sh (NEW)
+  lib/tmc.sh (enhanced)
+  lib/scp.sh
+  lib/comparison.sh
+  lib/sections/*.sh (18 modules)
+
+Documentation (Active):
+  K8S-HEALTH-CHECK-README.md
+  MIGRATION-GUIDE.md
+  OPTIMIZATION-PLAN-V3.1.md
+  PROJECT-STRUCTURE.txt
+  IMPLEMENTATION-SUMMARY-V3.1.md
+
+Archived Documentation:
+  archive_v3.0/
+  ├── K8S-HEALTH-CHECK-README-v3.0.md
+  ├── MIGRATION-GUIDE-V3.md
+  ├── PROJECT-STRUCTURE.txt
+  └── k8s-health-check-post.sh.v3.0.backup
+
+Benefits:
+---------
+✓ Single source of truth for each document type
+✓ No duplicate/conflicting documentation
+✓ Cleaner project root directory
+✓ Old versions safely archived for reference
+✓ All cross-references updated in documentation
+
+Next Steps:
+-----------
+1. Configure TMC endpoints in lib/tmc-context.sh
+2. Test with single cluster
+3. Deploy to production
+
+Project is ready for use!

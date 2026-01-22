@@ -1,0 +1,154 @@
+K8s Health Check Project Structure - v3.1
+==========================================
+Generated: 2025-01-22
+
+Main Scripts:
+-------------
+k8s-health-check-pre.sh              - PRE-change health check (unified, no --multi flag)
+k8s-health-check-post.sh             - POST-change health check with comparison
+clusters.conf                        - Simple cluster list configuration (NEW FORMAT)
+
+Library Modules:
+----------------
+lib/common.sh                        - Shared utilities and logging functions
+lib/config.sh                        - Configuration parser (simplified for v3.1)
+lib/tmc-context.sh                   - TMC context management (NEW in v3.1)
+lib/tmc.sh                           - TMC integration with auto-discovery (enhanced)
+lib/scp.sh                           - Windows SCP file transfer
+lib/comparison.sh                    - Comparison logic for PRE/POST analysis
+
+Health Check Sections (18 modules):
+------------------------------------
+lib/sections/01-cluster-overview.sh
+lib/sections/02-node-status.sh
+lib/sections/03-pod-status.sh
+lib/sections/04-workload-status.sh
+lib/sections/05-storage-status.sh
+lib/sections/06-networking.sh
+lib/sections/07-antrea-cni.sh
+lib/sections/08-tanzu-vmware.sh
+lib/sections/09-security-rbac.sh
+lib/sections/10-component-status.sh
+lib/sections/11-helm-releases.sh
+lib/sections/12-namespaces.sh
+lib/sections/13-resource-quotas.sh
+lib/sections/14-events.sh
+lib/sections/15-connectivity.sh
+lib/sections/16-images-audit.sh
+lib/sections/17-certificates.sh
+lib/sections/18-cluster-summary.sh
+
+Documentation:
+--------------
+K8S-HEALTH-CHECK-README.md           - Main documentation (v3.1)
+MIGRATION-GUIDE.md                   - Migration guide from v3.0 to v3.1
+OPTIMIZATION-PLAN-V3.1.md            - Technical optimization plan and details
+PROJECT-STRUCTURE.txt                - This file (project structure reference)
+IMPLEMENTATION-SUMMARY-V3.1.md       - Implementation summary and status
+
+Archived/Backup Files:
+----------------------
+archive_v3.0/
+├── K8S-HEALTH-CHECK-README-v3.0.md  - v3.0 README
+├── MIGRATION-GUIDE-V3.md            - v3.0 migration guide
+└── PROJECT-STRUCTURE.txt            - v3.0 project structure
+k8s-health-check-post.sh.v3.0.backup - v3.0 POST script backup
+backup_old_scripts/                  - Backup of older versions
+
+Key Changes in v3.1:
+--------------------
+1. Simplified Configuration:
+   - OLD: cluster-name.management-cluster.provisioner
+   - NEW: cluster-name (one per line)
+   - 60% less configuration effort
+
+2. Auto-Discovery:
+   - Automatically discovers management cluster from TMC
+   - Automatically discovers provisioner from TMC
+   - Caches metadata for performance
+
+3. Auto-Context Creation:
+   - Automatically creates TMC contexts based on naming patterns
+   - *-prod-[1-4] → Production TMC context
+   - *-uat-[1-4] or *-system-[1-4] → Non-production TMC context
+   - Reuses existing contexts for efficiency
+
+4. Unified Execution:
+   - No more --multi flag
+   - Always reads from clusters.conf
+   - Single execution path
+
+5. Code Reduction:
+   - 33% less code (from ~1070 to ~720 lines)
+   - Improved maintainability
+   - Better error handling
+
+Usage Examples:
+---------------
+# PRE-change health check
+./k8s-health-check-pre.sh ./clusters.conf
+
+# POST-change health check with comparison
+./k8s-health-check-post.sh ./clusters.conf ./health-check-results/pre-20250122_143000
+
+# With TMC credentials in environment
+TMC_SELF_MANAGED_USERNAME=user TMC_SELF_MANAGED_PASSWORD=pass ./k8s-health-check-pre.sh ./clusters.conf
+
+# With debug output
+DEBUG=on ./k8s-health-check-pre.sh ./clusters.conf
+
+Output Structure:
+-----------------
+health-check-results/
+├── pre-20250122_143000/
+│   ├── cluster-01/
+│   │   ├── kubeconfig
+│   │   └── health-check-report.txt
+│   └── cluster-02/
+│       ├── kubeconfig
+│       └── health-check-report.txt
+└── post-20250122_150000/
+    ├── cluster-01/
+    │   ├── kubeconfig
+    │   ├── health-check-report.txt
+    │   └── comparison-report.txt
+    └── cluster-02/
+        ├── kubeconfig
+        ├── health-check-report.txt
+        └── comparison-report.txt
+
+Prerequisites:
+--------------
+- Tanzu CLI installed and in PATH
+- kubectl installed and configured
+- TMC self-managed instance access
+- Cluster naming patterns: *-prod-[1-4], *-uat-[1-4], *-system-[1-4]
+- jq (optional but recommended for better performance)
+
+Configuration Required:
+-----------------------
+1. Edit lib/tmc-context.sh:
+   - Set NON_PROD_DNS to your non-prod TMC FQDN
+   - Set PROD_DNS to your prod TMC FQDN
+
+2. Create clusters.conf:
+   - Add cluster names (one per line)
+   - Follow naming patterns for auto-context detection
+
+Environment Variables (optional):
+----------------------------------
+TMC_SELF_MANAGED_USERNAME    - TMC username
+TMC_SELF_MANAGED_PASSWORD    - TMC password
+DEBUG                        - Set to 'on' for verbose output
+WINDOWS_SCP_ENABLED          - Set to 'true' for Windows SCP
+WINDOWS_SCP_USER             - Windows username
+WINDOWS_SCP_HOST             - Windows hostname
+WINDOWS_PRE_PATH             - Windows path for PRE reports
+WINDOWS_POST_PATH            - Windows path for POST reports
+
+For More Information:
+---------------------
+- See K8S-HEALTH-CHECK-README.md for complete documentation
+- See MIGRATION-GUIDE.md for migration from v3.0
+- See OPTIMIZATION-PLAN-V3.1.md for technical details
+- See IMPLEMENTATION-SUMMARY-V3.1.md for implementation status

@@ -1,0 +1,43 @@
+k8-health-check/
+├── k8s-health-check-pre.sh          # Unified PRE script (12 KB)
+├── k8s-health-check-post.sh         # Unified POST script (20 KB)
+│
+├── lib/                              # Modular libraries (34 KB total)
+│   ├── common.sh                     # Shared utilities (8 KB)
+│   ├── config.sh                     # Configuration parser (5 KB)
+│   ├── tmc.sh                        # TMC integration (3 KB)
+│   ├── scp.sh                        # Windows file transfer (5 KB)
+│   ├── comparison.sh                 # Comparison logic (14 KB)
+│   └── sections/                     # 18 health check modules
+│       ├── 01-cluster-overview.sh
+│       ├── 02-node-status.sh
+│       ├── 03-pod-status.sh
+│       ├── 04-workload-status.sh
+│       ├── 05-storage-status.sh
+│       ├── 06-networking.sh
+│       ├── 07-antrea-cni.sh
+│       ├── 08-tanzu-vmware.sh
+│       ├── 09-security-rbac.sh
+│       ├── 10-component-status.sh
+│       ├── 11-helm-releases.sh
+│       ├── 12-namespaces.sh
+│       ├── 13-resource-quotas.sh
+│       ├── 14-events.sh
+│       ├── 15-connectivity.sh
+│       ├── 16-images-audit.sh
+│       ├── 17-certificates.sh
+│       └── 18-cluster-summary.sh
+│
+├── clusters.conf                     # Multi-cluster configuration
+│
+├── K8S-HEALTH-CHECK-README.md        # Comprehensive documentation
+├── MIGRATION-GUIDE-V3.md             # Migration guide from v2.0
+│
+└── backup_old_scripts/               # Backup of v2.0 scripts
+    ├── k8s-health-check-pre.sh       # Old single-cluster PRE
+    ├── k8s-health-check-post.sh      # Old single-cluster POST
+    ├── multi-cluster-pre-check.sh    # Old multi-cluster PRE
+    ├── multi-cluster-post-check.sh   # Old multi-cluster POST
+    ├── K8S-HEALTH-CHECK-README-v2.md
+    ├── PROJECT-SUMMARY.md
+    └── QUICK-START-MULTI-CLUSTER.md
