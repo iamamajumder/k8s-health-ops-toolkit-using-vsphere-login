@@ -60,6 +60,13 @@ warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+# Display debug message (only when DEBUG is enabled)
+debug() {
+    if [[ "${DEBUG}" == "on" ]] || [[ "${DEBUG}" == "true" ]]; then
+        echo -e "${MAGENTA}[DEBUG]${NC} $1"
+    fi
+}
+
 # Display section header
 print_section() {
     echo ""
@@ -269,6 +276,7 @@ export -f progress
 export -f success
 export -f error
 export -f warning
+export -f debug
 export -f print_section
 export -f print_header
 export -f run_check

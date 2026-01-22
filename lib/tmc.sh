@@ -116,8 +116,11 @@ fetch_kubeconfig() {
     local output_file="${4:-}"
 
     progress "Fetching kubeconfig for cluster: ${cluster_name}"
+    debug "Using management cluster: ${mgmt_cluster}"
+    debug "Using provisioner: ${provisioner}"
 
     # Check if cluster exists
+    debug "Running: tanzu tmc cluster get ${cluster_name} -m ${mgmt_cluster} -p ${provisioner}"
     if tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" &>/dev/null; then
         # Fetch kubeconfig
         if [[ -n "${output_file}" ]]; then
@@ -141,6 +144,8 @@ fetch_kubeconfig() {
         fi
     else
         error "Cluster ${cluster_name} not found or not accessible in TMC"
+        error "Tried: tanzu tmc cluster get ${cluster_name} -m ${mgmt_cluster} -p ${provisioner}"
+        warning "Verify the cluster exists with: tanzu tmc cluster list --name ${cluster_name}"
         return 1
     fi
 }
