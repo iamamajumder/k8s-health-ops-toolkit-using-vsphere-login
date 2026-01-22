@@ -4,6 +4,8 @@ output/
 *-health-check-pre.output
 *-health-check-post.output
 *-health-check-comparison.txt
+health-check-results/
+
 
 # Kubeconfig Files (NEVER commit these!)
 *.kubeconfig
@@ -22,6 +24,7 @@ kubeconfig_*
 # Environment Variables
 .env
 .env.local
+
 
 # Logs
 *.log
