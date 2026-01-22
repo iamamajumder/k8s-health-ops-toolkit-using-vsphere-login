@@ -39,18 +39,18 @@ discover_cluster_metadata() {
             management=$(echo "${cached_data}" | cut -d':' -f2)
             provisioner=$(echo "${cached_data}" | cut -d':' -f3)
 
-            debug "Using cached metadata for ${cluster_name}: ${management}/${provisioner}"
+            debug "Using cached metadata for ${cluster_name}: ${management}/${provisioner}" >&2
             echo "${management}|${provisioner}"
             return 0
         fi
     fi
 
     # Cache miss - query TMC
-    progress "Discovering metadata for cluster '${cluster_name}' from TMC..."
+    progress "Discovering metadata for cluster '${cluster_name}' from TMC..." >&2
 
     local tmc_output
     if ! tmc_output=$(tanzu tmc cluster list --name "${cluster_name}" -o json 2>&1); then
-        error "Failed to query TMC for cluster '${cluster_name}'"
+        error "Failed to query TMC for cluster '${cluster_name}'" >&2
         return 1
     fi
 
@@ -64,21 +64,21 @@ discover_cluster_metadata() {
         provisioner=$(echo "${tmc_output}" | jq -r '.clusters[0].fullName.provisionerName // empty' 2>/dev/null || echo "")
     else
         # Fallback: parse JSON manually (basic parsing)
-        warning "jq not found, using basic JSON parsing (install jq for better performance)"
+        warning "jq not found, using basic JSON parsing (install jq for better performance)" >&2
         management=$(echo "${tmc_output}" | grep -o '"managementClusterName":"[^"]*"' | head -1 | cut -d'"' -f4)
         provisioner=$(echo "${tmc_output}" | grep -o '"provisionerName":"[^"]*"' | head -1 | cut -d'"' -f4)
     fi
 
     if [[ -z "${management}" ]] || [[ -z "${provisioner}" ]]; then
-        error "Cluster '${cluster_name}' not found in TMC or missing metadata"
-        warning "Please verify the cluster name is correct and accessible in TMC"
+        error "Cluster '${cluster_name}' not found in TMC or missing metadata" >&2
+        warning "Please verify the cluster name is correct and accessible in TMC" >&2
         return 1
     fi
 
     # Cache the result
     echo "${cluster_name}:${management}:${provisioner}" >> "${CLUSTER_METADATA_CACHE}"
 
-    success "Discovered: ${cluster_name} → Management: ${management}, Provisioner: ${provisioner}"
+    success "Discovered: ${cluster_name} → Management: ${management}, Provisioner: ${provisioner}" >&2
 
     echo "${management}|${provisioner}"
     return 0
