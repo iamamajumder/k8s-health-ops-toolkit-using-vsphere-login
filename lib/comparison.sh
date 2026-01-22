@@ -352,9 +352,14 @@ display_comparison_summary() {
     echo ""
 
     # Parse the diff file for critical metrics
-    local critical_count=$(grep -c "\[CRITICAL\]" "${diff_file}" 2>/dev/null || echo "0")
-    local warning_count=$(grep -c "\[WARNING\]" "${diff_file}" 2>/dev/null || echo "0")
-    local passed_count=$(grep -c "PASSED" "${diff_file}" 2>/dev/null || echo "0")
+    local critical_count=$(grep -c "\[CRITICAL\]" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
+    local warning_count=$(grep -c "\[WARNING\]" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
+    local passed_count=$(grep -c "PASSED" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
+
+    # Ensure they're valid integers
+    critical_count=${critical_count:-0}
+    warning_count=${warning_count:-0}
+    passed_count=${passed_count:-0}
 
     # Extract key changes
     echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────┐${NC}"

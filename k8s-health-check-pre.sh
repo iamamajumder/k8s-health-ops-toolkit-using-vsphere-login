@@ -61,7 +61,7 @@ fi
 
 show_usage() {
     cat << EOF
-Kubernetes Pre-Change Health Check v3.1
+Kubernetes Pre-Change Health Check
 
 Usage: $0 <clusters.conf>
 
@@ -122,7 +122,7 @@ run_health_checks() {
     fi
 
     # Display banner
-    print_section "Kubernetes Pre-Change Health Check v3.1"
+    print_section "Kubernetes Pre-Change Health Check"
 
     display_info "Configuration File" "${config_file}"
     display_info "Script Directory" "${SCRIPT_DIR}"
@@ -225,7 +225,7 @@ run_health_checks() {
         local report_file="${cluster_output_dir}/health-check-report.txt"
 
         {
-            print_header "KUBERNETES CLUSTER HEALTH CHECK - PRE-CHANGE v3.1"
+            print_header "KUBERNETES CLUSTER HEALTH CHECK - PRE-CHANGE"
             echo "Cluster: ${cluster_name}"
             echo "Check Started: $(get_formatted_timestamp)"
             echo "$(get_environment_info)"

@@ -62,7 +62,7 @@ fi
 
 show_usage() {
     cat << EOF
-Kubernetes Post-Change Health Check v3.1
+Kubernetes Post-Change Health Check
 
 Usage: $0 <clusters.conf> <pre-results-dir>
 
@@ -132,7 +132,7 @@ run_health_checks() {
     fi
 
     # Display banner
-    print_section "Kubernetes Post-Change Health Check v3.1"
+    print_section "Kubernetes Post-Change Health Check"
 
     display_info "Configuration File" "${config_file}"
     display_info "PRE Results Directory" "${pre_results_dir}"
@@ -236,7 +236,7 @@ run_health_checks() {
         local report_file="${cluster_output_dir}/health-check-report.txt"
 
         {
-            print_header "KUBERNETES CLUSTER HEALTH CHECK - POST-CHANGE v3.1"
+            print_header "KUBERNETES CLUSTER HEALTH CHECK - POST-CHANGE"
             echo "Cluster: ${cluster_name}"
             echo "Check Started: $(get_formatted_timestamp)"
             echo "$(get_environment_info)"
