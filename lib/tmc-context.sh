@@ -4,8 +4,8 @@
 # Handles automatic TMC context creation based on cluster naming patterns
 
 # TMC endpoint configuration
-NON_PROD_DNS="fqdn-of-non-prod-tmc-sm-url"
-PROD_DNS="fqdn-of-prod-tmc-sm-url"
+NON_PROD_DNS="tmc-1.tzm.ntrs.com"
+PROD_DNS="tmc-2-prod.tzm.ntrs.com"
 TMC_SM_CONTEXT_PROD="tmc-sm-prod"
 TMC_SM_CONTEXT_NONPROD="tmc-sm-nonprod"
 
