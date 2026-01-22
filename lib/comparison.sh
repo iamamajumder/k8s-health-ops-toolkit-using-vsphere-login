@@ -335,11 +335,102 @@ generate_summary() {
     echo ""
 }
 
+# Display beautified comparison summary to CLI
+display_comparison_summary() {
+    local diff_file="$1"
+    local cluster_name="$2"
+
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}                                                                               ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                  ${YELLOW}COMPARISON REPORT SUMMARY${NC}                                  ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                                               ${CYAN}║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${BLUE}Cluster:${NC} ${cluster_name}"
+    echo -e "${BLUE}Report:${NC}  ${diff_file}"
+    echo ""
+
+    # Parse the diff file for critical metrics
+    local critical_count=$(grep -c "\[CRITICAL\]" "${diff_file}" 2>/dev/null || echo "0")
+    local warning_count=$(grep -c "\[WARNING\]" "${diff_file}" 2>/dev/null || echo "0")
+    local passed_count=$(grep -c "PASSED" "${diff_file}" 2>/dev/null || echo "0")
+
+    # Extract key changes
+    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│${NC} ${YELLOW}STATUS OVERVIEW${NC}                                                              ${CYAN}│${NC}"
+    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    if [ "$critical_count" -gt 0 ]; then
+        echo -e "  ${RED}✗ CRITICAL Issues:${NC} ${RED}${critical_count}${NC}"
+    else
+        echo -e "  ${GREEN}✓ CRITICAL Issues:${NC} ${GREEN}0${NC}"
+    fi
+
+    if [ "$warning_count" -gt 0 ]; then
+        echo -e "  ${YELLOW}⚠ Warnings:${NC}        ${YELLOW}${warning_count}${NC}"
+    else
+        echo -e "  ${GREEN}✓ Warnings:${NC}        ${GREEN}0${NC}"
+    fi
+
+    echo ""
+
+    # Show critical items if any
+    if [ "$critical_count" -gt 0 ]; then
+        echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${CYAN}│${NC} ${RED}CRITICAL ITEMS${NC}                                                             ${CYAN}│${NC}"
+        echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+        grep "\[CRITICAL\]" "${diff_file}" 2>/dev/null | head -10 | sed 's/\[CRITICAL\]//' | while read -r line; do
+            echo -e "  ${RED}•${NC} ${line}"
+        done
+        echo ""
+    fi
+
+    # Show warnings if any
+    if [ "$warning_count" -gt 0 ] && [ "$critical_count" -eq 0 ]; then
+        echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${CYAN}│${NC} ${YELLOW}WARNING ITEMS${NC}                                                              ${CYAN}│${NC}"
+        echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+        grep "\[WARNING\]" "${diff_file}" 2>/dev/null | head -10 | sed 's/\[WARNING\]//' | while read -r line; do
+            echo -e "  ${YELLOW}•${NC} ${line}"
+        done
+        echo ""
+    fi
+
+    # Overall status
+    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│${NC} ${YELLOW}OVERALL STATUS${NC}                                                             ${CYAN}│${NC}"
+    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    if [ "$critical_count" -gt 0 ]; then
+        echo -e "  ${RED}❌ FAILED${NC} - Critical issues detected"
+        echo -e "  ${RED}⚠  Action Required:${NC} Investigate and resolve critical issues before proceeding"
+    elif [ "$warning_count" -gt 0 ]; then
+        echo -e "  ${YELLOW}⚠  WARNINGS${NC} - Some warnings detected"
+        echo -e "  ${YELLOW}ℹ  Recommendation:${NC} Monitor warnings, may resolve during rollout completion"
+    else
+        echo -e "  ${GREEN}✓ PASSED${NC} - All health checks successful"
+        echo -e "  ${GREEN}✓ Cluster is healthy after the change${NC}"
+    fi
+
+    echo ""
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC} ${BLUE}Full detailed report saved to:${NC}                                             ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC} ${diff_file}  ${CYAN}║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
 #===============================================================================
 # Export Functions
 #===============================================================================
 
 export -f generate_comparison_report
+export -f display_comparison_summary
 export -f compare_critical_health
 export -f compare_versions
 export -f compare_workloads

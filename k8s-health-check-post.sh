@@ -30,6 +30,33 @@ for section in "${SCRIPT_DIR}"/lib/sections/*.sh; do
 done
 
 #===============================================================================
+# Prerequisite Checks
+#===============================================================================
+
+# Check if kubectl is available
+if ! command_exists kubectl; then
+    error "kubectl command not found in PATH"
+    error "Please ensure kubectl is installed and available in your PATH"
+    error "Current PATH: ${PATH}"
+    exit 1
+fi
+
+# Check if tanzu CLI is available
+if ! command_exists tanzu; then
+    error "tanzu CLI not found in PATH"
+    error "Please ensure tanzu CLI is installed and available in your PATH"
+    exit 1
+fi
+
+# Check if jq is available
+if ! command_exists jq; then
+    error "jq command not found in PATH"
+    error "Please install jq for JSON parsing"
+    error "Install: https://jqlang.github.io/jq/download/ or 'choco install jq'"
+    exit 1
+fi
+
+#===============================================================================
 # Usage Function
 #===============================================================================
 
@@ -251,6 +278,9 @@ run_health_checks() {
                 generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}"
 
                 success "Comparison report generated: ${comparison_file}"
+
+                # Display beautified summary on CLI
+                display_comparison_summary "${comparison_file}" "${cluster_name}"
             else
                 warning "PRE-change report not found for ${cluster_name}, skipping comparison"
             fi

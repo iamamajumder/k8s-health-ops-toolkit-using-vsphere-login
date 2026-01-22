@@ -58,16 +58,9 @@ discover_cluster_metadata() {
     local management
     local provisioner
 
-    # Check if jq is available
-    if command_exists jq; then
-        management=$(echo "${tmc_output}" | jq -r '.clusters[0].fullName.managementClusterName // empty' 2>/dev/null || echo "")
-        provisioner=$(echo "${tmc_output}" | jq -r '.clusters[0].fullName.provisionerName // empty' 2>/dev/null || echo "")
-    else
-        # Fallback: parse JSON manually (basic parsing)
-        warning "jq not found, using basic JSON parsing (install jq for better performance)" >&2
-        management=$(echo "${tmc_output}" | grep -o '"managementClusterName":"[^"]*"' | head -1 | cut -d'"' -f4)
-        provisioner=$(echo "${tmc_output}" | grep -o '"provisionerName":"[^"]*"' | head -1 | cut -d'"' -f4)
-    fi
+    # Parse JSON using jq (required prerequisite)
+    management=$(echo "${tmc_output}" | jq -r '.clusters[0].fullName.managementClusterName // empty' 2>/dev/null || echo "")
+    provisioner=$(echo "${tmc_output}" | jq -r '.clusters[0].fullName.provisionerName // empty' 2>/dev/null || echo "")
 
     if [[ -z "${management}" ]] || [[ -z "${provisioner}" ]]; then
         error "Cluster '${cluster_name}' not found in TMC or missing metadata" >&2

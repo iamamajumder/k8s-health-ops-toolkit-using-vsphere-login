@@ -47,6 +47,14 @@ if ! command_exists tanzu; then
     exit 1
 fi
 
+# Check if jq is available
+if ! command_exists jq; then
+    error "jq command not found in PATH"
+    error "Please install jq for JSON parsing"
+    error "Install: https://jqlang.github.io/jq/download/ or 'choco install jq'"
+    exit 1
+fi
+
 #===============================================================================
 # Usage Function
 #===============================================================================
