@@ -98,21 +98,14 @@ ensure_tmc_context() {
     local endpoint
     endpoint=$(get_tmc_endpoint "${environment}")
 
-    # Check if context already exists
-    if context_exists "${context_name}"; then
-        progress "TMC context '${context_name}' already exists, reusing it"
-
-        # Set as current context
-        if tanzu context use "${context_name}" >/dev/null 2>&1; then
-            return 0
-        else
-            warning "Failed to switch to context '${context_name}', attempting to recreate"
-            # Delete and recreate if switch fails
-            tanzu context delete "${context_name}" -y >/dev/null 2>&1
-        fi
+    # Always delete existing context and create fresh one
+    # Check if context exists using tanzu context list
+    if tanzu context list 2>/dev/null | grep -q "${context_name}"; then
+        progress "Deleting existing TMC context '${context_name}'..."
+        tanzu context delete "${context_name}" -y >/dev/null 2>&1 || true
     fi
 
-    # Context doesn't exist or failed to switch, create it
+    # Create fresh context
     progress "Creating TMC context '${context_name}' for ${environment} environment"
     progress "Endpoint: ${endpoint}"
 
@@ -120,22 +113,26 @@ ensure_tmc_context() {
     local username="${TMC_SELF_MANAGED_USERNAME:-}"
     local password="${TMC_SELF_MANAGED_PASSWORD:-}"
 
-    # Prompt for username if not provided (keep prompting until valid)
-    while [[ -z "${username}" ]]; do
-        read -r -p "Enter TMC username (AO account): " username
+    # Prompt for username if not provided
+    if [[ -z "${username}" ]]; then
+        echo -n "Enter TMC username (AO account): "
+        read -r username </dev/tty
         if [[ -z "${username}" ]]; then
-            warning "Username cannot be empty. Please try again or press Ctrl+C to cancel."
+            error "Username cannot be empty"
+            return 1
         fi
-    done
+    fi
 
-    # Prompt for password if not provided (keep prompting until valid)
-    while [[ -z "${password}" ]]; do
-        read -r -s -p "Enter TMC password: " password
+    # Prompt for password if not provided
+    if [[ -z "${password}" ]]; then
+        echo -n "Enter TMC password: "
+        read -r -s password </dev/tty
         echo ""
         if [[ -z "${password}" ]]; then
-            warning "Password cannot be empty. Please try again or press Ctrl+C to cancel."
+            error "Password cannot be empty"
+            return 1
         fi
-    done
+    fi
 
     # Create context
     if TMC_SELF_MANAGED_USERNAME="${username}" \
