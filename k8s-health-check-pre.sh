@@ -182,6 +182,9 @@ run_health_checks() {
     local current=0
     local failed_clusters=()
 
+    # Array to store cluster summaries for console display
+    declare -a cluster_summaries=()
+
     # Process each cluster
     while IFS= read -r cluster_name; do
         current=$((current + 1))
@@ -260,6 +263,26 @@ run_health_checks() {
 
         } > "${report_file}" 2>&1
 
+        # Capture Section 18 summary for console display
+        local cluster_summary=$(cat << EOSUMMARY
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  CLUSTER: ${cluster_name}
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Nodes Total:       $(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+║  Nodes Ready:       $(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
+║  Pods Total:        $(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+║  Pods Running:      $(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+║  Pods Not Running:  $(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
+║  Deployments:       $(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+║  DaemonSets:        $(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+║  Services:          $(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+║  PVCs:              $(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+║  Namespaces:        $(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
+╚══════════════════════════════════════════════════════════════════════════════╝
+EOSUMMARY
+)
+        cluster_summaries+=("${cluster_summary}")
+
         success "Health check completed for ${cluster_name}"
         success "Report saved: ${report_file}"
 
@@ -288,6 +311,17 @@ run_health_checks() {
 
     echo ""
     echo -e "${CYAN}Results directory: ${NC}${output_base_dir}"
+
+    # Display all cluster summaries
+    if [ ${#cluster_summaries[@]} -gt 0 ]; then
+        echo ""
+        echo ""
+        print_section "Cluster Health Summaries"
+        for summary in "${cluster_summaries[@]}"; do
+            echo -e "${CYAN}${summary}${NC}"
+            echo ""
+        done
+    fi
 
     # Optional: Copy to Windows
     if [[ -n "${WINDOWS_SCP_ENABLED:-}" ]] && [[ "${WINDOWS_SCP_ENABLED}" == "true" ]]; then
