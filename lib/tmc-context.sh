@@ -120,20 +120,22 @@ ensure_tmc_context() {
     local username="${TMC_SELF_MANAGED_USERNAME:-}"
     local password="${TMC_SELF_MANAGED_PASSWORD:-}"
 
-    if [[ -z "${username}" ]]; then
+    # Prompt for username if not provided (keep prompting until valid)
+    while [[ -z "${username}" ]]; do
         read -r -p "Enter TMC username (AO account): " username
-    fi
+        if [[ -z "${username}" ]]; then
+            warning "Username cannot be empty. Please try again or press Ctrl+C to cancel."
+        fi
+    done
 
-    if [[ -z "${password}" ]]; then
+    # Prompt for password if not provided (keep prompting until valid)
+    while [[ -z "${password}" ]]; do
         read -r -s -p "Enter TMC password: " password
         echo ""
-    fi
-
-    # Validate credentials are not empty
-    if [[ -z "${username}" ]] || [[ -z "${password}" ]]; then
-        error "Username and password are required for TMC authentication"
-        return 1
-    fi
+        if [[ -z "${password}" ]]; then
+            warning "Password cannot be empty. Please try again or press Ctrl+C to cancel."
+        fi
+    done
 
     # Create context
     if TMC_SELF_MANAGED_USERNAME="${username}" \

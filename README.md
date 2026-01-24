@@ -16,6 +16,8 @@ Comprehensive automated health check system for Kubernetes clusters running on *
 - ✅ **PRE/POST Comparison**: Intelligent comparison with issue classification
 - ✅ **Multi-Cluster**: Process multiple clusters sequentially
 - ✅ **Error Resilient**: Graceful handling of failures, continues with other clusters
+- ✅ **Smart Caching**: Persistent cache for metadata (7 days) and kubeconfig (24 hours)
+- ✅ **Interactive Prompts**: Prompts for credentials when not provided in environment
 
 ### Environment
 
@@ -54,19 +56,21 @@ Comprehensive automated health check system for Kubernetes clusters running on *
    - `*-uat-[1-4]` → Non-production (e.g., `workload-uat-01`)
    - `*-system-[1-4]` → Non-production (e.g., `dev-system-01`)
 
-### Optional (Recommended)
+5. **jq** - Required for JSON parsing
+   ```bash
+   # Verify jq is installed
+   jq --version
 
-- **jq** - For faster JSON parsing
-  ```bash
-  # Ubuntu/Debian
-  sudo apt-get install jq
+   # Install if needed:
+   # Ubuntu/Debian
+   sudo apt-get install jq
 
-  # RHEL/CentOS
-  sudo yum install jq
+   # RHEL/CentOS
+   sudo yum install jq
 
-  # macOS
-  brew install jq
-  ```
+   # macOS
+   brew install jq
+   ```
 
 ---
 
@@ -292,6 +296,27 @@ export WINDOWS_POST_PATH="C:\\HealthCheckReports\\post"
 
 ./k8s-health-check-pre.sh ./clusters.conf
 ```
+
+### Cache Management
+
+The scripts cache cluster metadata and kubeconfigs for improved performance.
+
+**View cache status:**
+```bash
+./k8s-health-check-pre.sh --cache-status
+```
+
+**Clear all cached data:**
+```bash
+./k8s-health-check-pre.sh --clear-cache
+```
+
+**Cache configuration:**
+
+| Cache Type | Location | Expiry |
+|------------|----------|--------|
+| Metadata | `~/.k8s-health-check/metadata.cache` | 7 days |
+| Kubeconfig | `~/.k8s-health-check/kubeconfigs/` | 24 hours |
 
 ---
 

@@ -84,13 +84,10 @@ print_section() {
 print_header() {
     local title="$1"
     echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║"
-    echo "║  ${title}"
-    echo "║"
-    echo "║  Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo "================================================================================"
+    echo "=== ${title}"
+    echo "=== Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "================================================================================"
     echo ""
 }
 
@@ -99,14 +96,11 @@ run_check() {
     local description="$1"
     local cmd="$2"
 
-    echo ""
-    echo "┌─────────────────────────────────────────────────────────────────────────────┐"
-    echo "│ ${description}"
-    echo "└─────────────────────────────────────────────────────────────────────────────┘"
-    echo ""
+    echo "--- ${description} ---"
+    echo "Command: ${cmd}"
+    echo "Output:"
     eval "${cmd}" 2>&1 || echo "[WARN] Command returned non-zero exit code"
     echo ""
-    echo "───────────────────────────────────────────────────────────────────────────────"
 }
 
 #===============================================================================
@@ -258,9 +252,10 @@ display_info() {
 # Environment Information
 #===============================================================================
 
-# Get environment details
+# Get environment details (disabled - environment may change)
 get_environment_info() {
-    echo "Environment: VMware Cloud Foundation 5.2.1 / VKS 3.3.3"
+    # Intentionally empty - environment details removed for flexibility
+    :
 }
 
 # Get current timestamp

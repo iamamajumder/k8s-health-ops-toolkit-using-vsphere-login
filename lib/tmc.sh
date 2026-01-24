@@ -16,8 +16,82 @@ fi
 # Configuration
 #===============================================================================
 
-# Cache file for discovered cluster metadata
-CLUSTER_METADATA_CACHE="${TMPDIR:-/tmp}/k8s-health-check-cluster-cache-$$.txt"
+# Cache directory and files
+CACHE_DIR="${HOME}/.k8s-health-check"
+CLUSTER_METADATA_CACHE="${CACHE_DIR}/metadata.cache"
+KUBECONFIG_CACHE_DIR="${CACHE_DIR}/kubeconfigs"
+
+# Cache expiry times (in seconds)
+METADATA_CACHE_EXPIRY=604800    # 7 days - metadata rarely changes
+KUBECONFIG_CACHE_EXPIRY=86400   # 24 hours - kubeconfig should be refreshed daily
+
+# Initialize cache directory
+init_cache_dir() {
+    if [[ ! -d "${CACHE_DIR}" ]]; then
+        mkdir -p "${CACHE_DIR}"
+        chmod 700 "${CACHE_DIR}"
+    fi
+    if [[ ! -d "${KUBECONFIG_CACHE_DIR}" ]]; then
+        mkdir -p "${KUBECONFIG_CACHE_DIR}"
+        chmod 700 "${KUBECONFIG_CACHE_DIR}"
+    fi
+}
+
+# Check if cache entry is still valid based on timestamp
+is_cache_valid() {
+    local cache_timestamp="$1"
+    local expiry_seconds="$2"
+    local current_time=$(date +%s)
+    local age=$((current_time - cache_timestamp))
+
+    if [ $age -lt $expiry_seconds ]; then
+        return 0  # Valid
+    else
+        return 1  # Expired
+    fi
+}
+
+# Get cache status
+get_cache_status() {
+    init_cache_dir
+    echo ""
+    echo "=== Cache Status ==="
+    echo "Cache Directory: ${CACHE_DIR}"
+    echo ""
+
+    if [[ -f "${CLUSTER_METADATA_CACHE}" ]]; then
+        local entries=$(wc -l < "${CLUSTER_METADATA_CACHE}" 2>/dev/null || echo "0")
+        local cache_age=$(stat -c %Y "${CLUSTER_METADATA_CACHE}" 2>/dev/null || stat -f %m "${CLUSTER_METADATA_CACHE}" 2>/dev/null || echo "0")
+        local current_time=$(date +%s)
+        local age_days=$(( (current_time - cache_age) / 86400 ))
+        echo "Metadata Cache: ${CLUSTER_METADATA_CACHE}"
+        echo "  - Entries: ${entries}"
+        echo "  - Age: ${age_days} day(s)"
+    else
+        echo "Metadata Cache: Not found"
+    fi
+    echo ""
+
+    if [[ -d "${KUBECONFIG_CACHE_DIR}" ]]; then
+        local kubeconfig_count=$(ls -1 "${KUBECONFIG_CACHE_DIR}"/*.kubeconfig 2>/dev/null | wc -l || echo "0")
+        echo "Kubeconfig Cache: ${KUBECONFIG_CACHE_DIR}"
+        echo "  - Cached configs: ${kubeconfig_count}"
+    else
+        echo "Kubeconfig Cache: Not found"
+    fi
+    echo ""
+}
+
+# Clear all caches
+clear_cache() {
+    progress "Clearing all caches..."
+    rm -f "${CLUSTER_METADATA_CACHE}" 2>/dev/null
+    rm -rf "${KUBECONFIG_CACHE_DIR}"/*.kubeconfig 2>/dev/null
+    success "Cache cleared"
+}
+
+# Initialize cache on module load
+init_cache_dir
 
 #===============================================================================
 # TMC Functions
@@ -33,15 +107,31 @@ discover_cluster_metadata() {
         cached_data=$(grep "^${cluster_name}:" "${CLUSTER_METADATA_CACHE}" 2>/dev/null || true)
 
         if [[ -n "${cached_data}" ]]; then
-            # Cache hit - extract management and provisioner
+            # Cache hit - extract management, provisioner, and timestamp
             local management
             local provisioner
+            local cache_timestamp
             management=$(echo "${cached_data}" | cut -d':' -f2)
             provisioner=$(echo "${cached_data}" | cut -d':' -f3)
+            cache_timestamp=$(echo "${cached_data}" | cut -d':' -f4)
 
-            debug "Using cached metadata for ${cluster_name}: ${management}/${provisioner}" >&2
-            echo "${management}|${provisioner}"
-            return 0
+            # Check if cache is still valid (if timestamp exists)
+            if [[ -n "${cache_timestamp}" ]]; then
+                if is_cache_valid "${cache_timestamp}" "${METADATA_CACHE_EXPIRY}"; then
+                    debug "Using cached metadata for ${cluster_name}: ${management}/${provisioner}" >&2
+                    echo "${management}|${provisioner}"
+                    return 0
+                else
+                    debug "Cache expired for ${cluster_name}, refreshing..." >&2
+                    # Remove expired entry
+                    sed -i "/^${cluster_name}:/d" "${CLUSTER_METADATA_CACHE}" 2>/dev/null || true
+                fi
+            else
+                # Old cache format without timestamp, use it but don't validate expiry
+                debug "Using cached metadata (no timestamp) for ${cluster_name}: ${management}/${provisioner}" >&2
+                echo "${management}|${provisioner}"
+                return 0
+            fi
         fi
     fi
 
@@ -68,8 +158,9 @@ discover_cluster_metadata() {
         return 1
     fi
 
-    # Cache the result
-    echo "${cluster_name}:${management}:${provisioner}" >> "${CLUSTER_METADATA_CACHE}"
+    # Cache the result with timestamp
+    local current_timestamp=$(date +%s)
+    echo "${cluster_name}:${management}:${provisioner}:${current_timestamp}" >> "${CLUSTER_METADATA_CACHE}"
 
     success "Discovered: ${cluster_name} → Management: ${management}, Provisioner: ${provisioner}" >&2
 
@@ -77,10 +168,28 @@ discover_cluster_metadata() {
     return 0
 }
 
-# Fetch kubeconfig using auto-discovered metadata
+# Fetch kubeconfig using auto-discovered metadata (with caching)
 fetch_kubeconfig_auto() {
     local cluster_name="$1"
     local output_file="${2:-}"
+
+    # Check for cached kubeconfig first
+    local cached_kubeconfig="${KUBECONFIG_CACHE_DIR}/${cluster_name}.kubeconfig"
+    if [[ -f "${cached_kubeconfig}" ]]; then
+        local file_timestamp=$(stat -c %Y "${cached_kubeconfig}" 2>/dev/null || stat -f %m "${cached_kubeconfig}" 2>/dev/null || echo "0")
+        if is_cache_valid "${file_timestamp}" "${KUBECONFIG_CACHE_EXPIRY}"; then
+            debug "Using cached kubeconfig for ${cluster_name}" >&2
+            if [[ -n "${output_file}" ]]; then
+                cp "${cached_kubeconfig}" "${output_file}"
+                success "Kubeconfig loaded from cache for ${cluster_name}"
+            else
+                cat "${cached_kubeconfig}"
+            fi
+            return 0
+        else
+            debug "Cached kubeconfig expired for ${cluster_name}, refreshing..." >&2
+        fi
+    fi
 
     # Discover metadata
     local metadata
@@ -95,7 +204,13 @@ fetch_kubeconfig_auto() {
 
     # Fetch kubeconfig using discovered metadata
     if [[ -n "${output_file}" ]]; then
-        fetch_kubeconfig "${cluster_name}" "${management}" "${provisioner}" "${output_file}"
+        if fetch_kubeconfig "${cluster_name}" "${management}" "${provisioner}" "${output_file}"; then
+            # Cache the kubeconfig
+            cp "${output_file}" "${cached_kubeconfig}" 2>/dev/null
+            chmod 600 "${cached_kubeconfig}" 2>/dev/null
+            return 0
+        fi
+        return 1
     else
         fetch_kubeconfig "${cluster_name}" "${management}" "${provisioner}"
     fi

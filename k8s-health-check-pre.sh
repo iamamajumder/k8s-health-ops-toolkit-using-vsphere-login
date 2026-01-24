@@ -94,6 +94,8 @@ Environment Variables:
 
 Options:
   -h, --help           Show this help message
+  --cache-status       Show cache status (metadata and kubeconfig cache)
+  --clear-cache        Clear all cached data
 
 Examples:
   # Run health check on all clusters in config
@@ -104,6 +106,12 @@ Examples:
 
   # With TMC credentials in environment
   TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass $0 ./clusters.conf
+
+  # View cache status
+  $0 --cache-status
+
+  # Clear cache
+  $0 --clear-cache
 
 EOF
     exit 0
@@ -228,7 +236,6 @@ run_health_checks() {
             print_header "KUBERNETES CLUSTER HEALTH CHECK - PRE-CHANGE"
             echo "Cluster: ${cluster_name}"
             echo "Check Started: $(get_formatted_timestamp)"
-            echo "$(get_environment_info)"
             echo ""
 
             # Run all 18 sections
@@ -302,6 +309,17 @@ main() {
     # Parse arguments
     if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
         show_usage
+    fi
+
+    # Handle cache management options
+    if [[ "$1" == "--cache-status" ]]; then
+        get_cache_status
+        exit 0
+    fi
+
+    if [[ "$1" == "--clear-cache" ]]; then
+        clear_cache
+        exit 0
     fi
 
     local config_file="$1"

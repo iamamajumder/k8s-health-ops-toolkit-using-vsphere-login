@@ -5,7 +5,7 @@ run_section_04_workload_status() {
     print_header "SECTION 4: WORKLOAD STATUS"
 
     run_check "All Deployments" "kubectl get deploy -A -o wide"
-    run_check "Deployments Not Ready" "kubectl get deploy -A | awk 'NR==1 || \$3 != \$4' | grep -v 'READY' || echo 'All deployments are ready'"
+    run_check "Deployments Not Ready" "kubectl get deploy -A --no-headers 2>/dev/null | awk '{split(\$3,a,\"/\"); if(a[1]!=a[2]) print}' | grep -q . && kubectl get deploy -A | awk 'NR==1 {print} NR>1 {split(\$3,a,\"/\"); if(a[1]!=a[2]) print}' || echo 'All deployments are ready'"
     run_check "All DaemonSets" "kubectl get ds -A -o wide"
     run_check "DaemonSets Not Ready" "kubectl get ds -A | awk 'NR==1 || \$4 != \$6'"
     run_check "All StatefulSets" "kubectl get sts -A -o wide 2>/dev/null || echo 'No StatefulSets found'"
