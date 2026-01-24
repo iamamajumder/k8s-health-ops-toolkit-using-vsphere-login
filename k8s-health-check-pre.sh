@@ -265,20 +265,17 @@ run_health_checks() {
 
         # Capture Section 18 summary for console display
         local cluster_summary=$(cat << EOSUMMARY
-╔══════════════════════════════════════════════════════════════════════════════╗
-║  CLUSTER: ${cluster_name}
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  Nodes Total:       $(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-║  Nodes Ready:       $(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
-║  Pods Total:        $(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-║  Pods Running:      $(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
-║  Pods Not Running:  $(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
-║  Deployments:       $(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-║  DaemonSets:        $(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-║  Services:          $(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-║  PVCs:              $(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-║  Namespaces:        $(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
-╚══════════════════════════════════════════════════════════════════════════════╝
+CLUSTER: ${cluster_name}
+  Nodes Total:       $(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  Nodes Ready:       $(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
+  Pods Total:        $(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  Pods Running:      $(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+  Pods Not Running:  $(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
+  Deployments:       $(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  DaemonSets:        $(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  Services:          $(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  PVCs:              $(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  Namespaces:        $(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
 EOSUMMARY
 )
         cluster_summaries+=("${cluster_summary}")
