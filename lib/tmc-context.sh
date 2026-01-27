@@ -27,7 +27,7 @@ get_context_timestamp() {
     local context_name="$1"
 
     if [[ -f "${CONTEXT_TIMESTAMP_FILE}" ]]; then
-        grep "^${context_name}:" "${CONTEXT_TIMESTAMP_FILE}" 2>/dev/null | cut -d':' -f2
+        grep "^${context_name}:" "${CONTEXT_TIMESTAMP_FILE}" 2>/dev/null | head -1 | cut -d':' -f2 | tr -d ' \n\r'
     fi
 }
 
