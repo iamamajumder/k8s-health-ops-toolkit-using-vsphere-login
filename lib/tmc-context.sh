@@ -14,6 +14,11 @@ CONTEXT_CACHE_DIR="${HOME}/.k8s-health-check"
 CONTEXT_TIMESTAMP_FILE="${CONTEXT_CACHE_DIR}/context-timestamps.cache"
 CONTEXT_CACHE_EXPIRY=79200  # 22 hours in seconds
 
+# Track which contexts have been setup in this script run
+declare -A CONTEXT_SETUP_DONE 2>/dev/null || CONTEXT_SETUP_DONE=""
+PROD_CONTEXT_READY=""
+NONPROD_CONTEXT_READY=""
+
 # Initialize context cache directory
 init_context_cache() {
     if [[ ! -d "${CONTEXT_CACHE_DIR}" ]]; then
@@ -163,20 +168,33 @@ ensure_tmc_context() {
     local endpoint
     endpoint=$(get_tmc_endpoint "${environment}")
 
+    # Check if we've already setup this context in this script run
+    if [[ "${environment}" == "prod" ]] && [[ -n "${PROD_CONTEXT_READY}" ]]; then
+        # Already setup, just switch to it silently
+        tanzu context use "${context_name}" >/dev/null 2>&1
+        return 0
+    fi
+    if [[ "${environment}" == "nonprod" ]] && [[ -n "${NONPROD_CONTEXT_READY}" ]]; then
+        # Already setup, just switch to it silently
+        tanzu context use "${context_name}" >/dev/null 2>&1
+        return 0
+    fi
+
     # Check if context exists and is still valid (less than 22 hours old)
     if tanzu context list 2>/dev/null | grep -q "${context_name}"; then
         if is_context_valid "${context_name}"; then
-            # Context exists and is valid, verify it works
+            # Context exists and is valid, just switch to it (skip auth check)
             if tanzu context use "${context_name}" >/dev/null 2>&1; then
-                if tanzu tmc cluster list --limit 1 >/dev/null 2>&1; then
-                    success "Reusing existing TMC context '${context_name}'"
-                    return 0
+                success "Reusing existing TMC context '${context_name}'"
+                # Mark as ready for subsequent calls in this run
+                if [[ "${environment}" == "prod" ]]; then
+                    PROD_CONTEXT_READY="true"
                 else
-                    progress "Context exists but authentication failed, recreating..."
+                    NONPROD_CONTEXT_READY="true"
                 fi
-            else
-                progress "Context exists but cannot be used, recreating..."
+                return 0
             fi
+            progress "Context exists but cannot be used, recreating..."
         else
             progress "Context '${context_name}' has expired, recreating..."
         fi
@@ -224,6 +242,12 @@ ensure_tmc_context() {
         success "TMC context '${context_name}' created successfully"
         # Save timestamp for 22-hour validity check
         save_context_timestamp "${context_name}"
+        # Mark as ready for subsequent calls in this run
+        if [[ "${environment}" == "prod" ]]; then
+            PROD_CONTEXT_READY="true"
+        else
+            NONPROD_CONTEXT_READY="true"
+        fi
         return 0
     else
         error "Failed to create TMC context '${context_name}'"

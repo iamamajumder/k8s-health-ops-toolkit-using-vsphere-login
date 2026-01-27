@@ -176,15 +176,6 @@ run_health_checks() {
     # Display cluster list
     display_cluster_list "${config_file}" || exit 1
 
-    # Confirm execution
-    read -p "$(echo -e ${YELLOW}Continue with post-change health checks? [y/N]: ${NC})" -n 1 -r
-    echo ""
-
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        warning "Operation cancelled by user"
-        exit 0
-    fi
-
     echo ""
 
     # Initialize counters

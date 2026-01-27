@@ -413,9 +413,6 @@ display_comparison_summary() {
 
     echo ""
     echo -e "${CYAN}================================================================================${NC}"
-    echo -e "${CYAN}║${NC} ${BLUE}Full detailed report saved to:${NC}                                             ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC} ${diff_file}  ${CYAN}║${NC}"
-    echo -e "${BLUE}Full report:${NC} ${diff_file}"
     echo ""
 }
 
