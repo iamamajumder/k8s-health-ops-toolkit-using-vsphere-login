@@ -9,6 +9,71 @@ PROD_DNS="tmc-2-prod.tzm.ntrs.com"
 TMC_SM_CONTEXT_PROD="tmc-sm-prod"
 TMC_SM_CONTEXT_NONPROD="tmc-sm-nonprod"
 
+# Context cache configuration
+CONTEXT_CACHE_DIR="${HOME}/.k8s-health-check"
+CONTEXT_TIMESTAMP_FILE="${CONTEXT_CACHE_DIR}/context-timestamps.cache"
+CONTEXT_CACHE_EXPIRY=79200  # 22 hours in seconds
+
+# Initialize context cache directory
+init_context_cache() {
+    if [[ ! -d "${CONTEXT_CACHE_DIR}" ]]; then
+        mkdir -p "${CONTEXT_CACHE_DIR}"
+        chmod 700 "${CONTEXT_CACHE_DIR}"
+    fi
+}
+
+# Get context creation timestamp from cache
+get_context_timestamp() {
+    local context_name="$1"
+
+    if [[ -f "${CONTEXT_TIMESTAMP_FILE}" ]]; then
+        grep "^${context_name}:" "${CONTEXT_TIMESTAMP_FILE}" 2>/dev/null | cut -d':' -f2
+    fi
+}
+
+# Save context creation timestamp to cache
+save_context_timestamp() {
+    local context_name="$1"
+    local timestamp=$(date +%s)
+
+    init_context_cache
+
+    # Remove old entry if exists
+    if [[ -f "${CONTEXT_TIMESTAMP_FILE}" ]]; then
+        grep -v "^${context_name}:" "${CONTEXT_TIMESTAMP_FILE}" > "${CONTEXT_TIMESTAMP_FILE}.tmp" 2>/dev/null && \
+        mv "${CONTEXT_TIMESTAMP_FILE}.tmp" "${CONTEXT_TIMESTAMP_FILE}" || true
+    fi
+
+    # Add new entry
+    echo "${context_name}:${timestamp}" >> "${CONTEXT_TIMESTAMP_FILE}"
+}
+
+# Check if context is still valid (less than 22 hours old)
+is_context_valid() {
+    local context_name="$1"
+    local cached_timestamp
+
+    cached_timestamp=$(get_context_timestamp "${context_name}")
+
+    if [[ -z "${cached_timestamp}" ]]; then
+        return 1  # No timestamp found, context needs recreation
+    fi
+
+    local current_time=$(date +%s)
+    local age=$((current_time - cached_timestamp))
+
+    if [ $age -lt $CONTEXT_CACHE_EXPIRY ]; then
+        local age_hours=$((age / 3600))
+        local age_mins=$(( (age % 3600) / 60 ))
+        progress "Context '${context_name}' is ${age_hours}h ${age_mins}m old (valid for 22 hours)"
+        return 0  # Valid
+    else
+        local age_hours=$((age / 3600))
+        progress "Context '${context_name}' is ${age_hours} hours old (expired, max 22 hours)"
+        return 1  # Expired
+    fi
+}
+
 # Determine if cluster is production based on naming pattern
 # Pattern: *-prod-[1-4] → production
 # Pattern: *-uat-[1-4] or *-system-[1-4] → non-production
@@ -98,9 +163,24 @@ ensure_tmc_context() {
     local endpoint
     endpoint=$(get_tmc_endpoint "${environment}")
 
-    # Always delete existing context and create fresh one
-    # Check if context exists using tanzu context list
+    # Check if context exists and is still valid (less than 22 hours old)
     if tanzu context list 2>/dev/null | grep -q "${context_name}"; then
+        if is_context_valid "${context_name}"; then
+            # Context exists and is valid, verify it works
+            if tanzu context use "${context_name}" >/dev/null 2>&1; then
+                if tanzu tmc cluster list --limit 1 >/dev/null 2>&1; then
+                    success "Reusing existing TMC context '${context_name}'"
+                    return 0
+                else
+                    progress "Context exists but authentication failed, recreating..."
+                fi
+            else
+                progress "Context exists but cannot be used, recreating..."
+            fi
+        else
+            progress "Context '${context_name}' has expired, recreating..."
+        fi
+        # Delete the existing context
         progress "Deleting existing TMC context '${context_name}'..."
         tanzu context delete "${context_name}" -y >/dev/null 2>&1 || true
     fi
@@ -142,6 +222,8 @@ ensure_tmc_context() {
            -i pinniped \
            --basic-auth >/dev/null 2>&1; then
         success "TMC context '${context_name}' created successfully"
+        # Save timestamp for 22-hour validity check
+        save_context_timestamp "${context_name}"
         return 0
     else
         error "Failed to create TMC context '${context_name}'"
@@ -194,6 +276,10 @@ verify_tmc_context() {
     fi
 }
 
+export -f init_context_cache
+export -f get_context_timestamp
+export -f save_context_timestamp
+export -f is_context_valid
 export -f determine_environment
 export -f get_tmc_context_name
 export -f get_tmc_endpoint
