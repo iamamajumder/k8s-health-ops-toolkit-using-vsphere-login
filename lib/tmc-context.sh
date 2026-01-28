@@ -12,7 +12,7 @@ TMC_SM_CONTEXT_NONPROD="tmc-sm-nonprod"
 # Context cache configuration
 CONTEXT_CACHE_DIR="${HOME}/.k8s-health-check"
 CONTEXT_TIMESTAMP_FILE="${CONTEXT_CACHE_DIR}/context-timestamps.cache"
-CONTEXT_CACHE_EXPIRY=79200  # 22 hours in seconds
+CONTEXT_CACHE_EXPIRY=43200  # 12 hours in seconds
 
 # Track which contexts have been setup in this script run
 declare -A CONTEXT_SETUP_DONE 2>/dev/null || CONTEXT_SETUP_DONE=""
@@ -53,7 +53,7 @@ save_context_timestamp() {
     echo "${context_name}:${timestamp}" >> "${CONTEXT_TIMESTAMP_FILE}"
 }
 
-# Check if context is still valid (less than 22 hours old)
+# Check if context is still valid (less than 12 hours old)
 is_context_valid() {
     local context_name="$1"
     local cached_timestamp
@@ -70,11 +70,11 @@ is_context_valid() {
     if [ $age -lt $CONTEXT_CACHE_EXPIRY ]; then
         local age_hours=$((age / 3600))
         local age_mins=$(( (age % 3600) / 60 ))
-        progress "Context '${context_name}' is ${age_hours}h ${age_mins}m old (valid for 22 hours)"
+        progress "Context '${context_name}' is ${age_hours}h ${age_mins}m old (valid for 12 hours)"
         return 0  # Valid
     else
         local age_hours=$((age / 3600))
-        progress "Context '${context_name}' is ${age_hours} hours old (expired, max 22 hours)"
+        progress "Context '${context_name}' is ${age_hours} hours old (expired, max 12 hours)"
         return 1  # Expired
     fi
 }
@@ -180,7 +180,7 @@ ensure_tmc_context() {
         return 0
     fi
 
-    # Check if context exists and is still valid (less than 22 hours old)
+    # Check if context exists and is still valid (less than 12 hours old)
     if tanzu context list 2>/dev/null | grep -q "${context_name}"; then
         if is_context_valid "${context_name}"; then
             # Context exists and is valid, just switch to it (skip auth check)
@@ -240,7 +240,7 @@ ensure_tmc_context() {
            -i pinniped \
            --basic-auth >/dev/null 2>&1; then
         success "TMC context '${context_name}' created successfully"
-        # Save timestamp for 22-hour validity check
+        # Save timestamp for 12-hour validity check
         save_context_timestamp "${context_name}"
         # Mark as ready for subsequent calls in this run
         if [[ "${environment}" == "prod" ]]; then
