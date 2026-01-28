@@ -63,10 +63,11 @@ show_usage() {
     cat << EOF
 Kubernetes Pre-Change Health Check
 
-Usage: $0 <clusters.conf>
+Usage: $0 [clusters.conf]
 
 Arguments:
   clusters.conf    Path to configuration file with cluster names (one per line)
+                   Default: ./clusters.conf (if not specified)
 
 Example clusters.conf:
   prod-workload-01
@@ -77,6 +78,7 @@ Features:
   - Auto-discovers cluster metadata from TMC
   - Auto-creates TMC contexts based on naming patterns
   - Caches cluster metadata for performance
+  - Enhanced health summary with HEALTHY/WARNINGS/CRITICAL status
 
 Cluster Naming Pattern:
   *-prod-[1-4]         → Production TMC context
@@ -98,14 +100,17 @@ Options:
   --clear-cache        Clear all cached data
 
 Examples:
-  # Run health check on all clusters in config
+  # Run health check using default ./clusters.conf
+  $0
+
+  # Run health check with specific config file
   $0 ./clusters.conf
 
   # With debug output
-  DEBUG=on $0 ./clusters.conf
+  DEBUG=on $0
 
   # With TMC credentials in environment
-  TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass $0 ./clusters.conf
+  TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass $0
 
   # View cache status
   $0 --cache-status
@@ -254,19 +259,56 @@ run_health_checks() {
 
         } > "${report_file}" 2>&1
 
-        # Capture Section 18 summary for console display
+        # Capture Section 18 summary with health indicators for console display
+        local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
+        local nodes_notready=$((nodes_total - nodes_ready))
+        local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+        local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff | tr -d ' ' || echo '0')
+        local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending | tr -d ' ' || echo '0')
+        local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
+        local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local ds_notready=$(kubectl get ds -A --no-headers 2>/dev/null | awk '$4 != $6 {count++} END{print count+0}' | tr -d ' ')
+        local sts_total=$(kubectl get sts -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local sts_notready=$(kubectl get sts -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
+        local pvc_total=$(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pvc_notbound=$(kubectl get pvc -A --no-headers 2>/dev/null | grep -v Bound | wc -l | tr -d ' ')
+        local helm_total=$(helm list -A --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
+        local helm_failed=$(helm list -A --failed --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
+
+        # Determine health status
+        local health_status="HEALTHY"
+        local critical_count=0
+        local warning_count=0
+        [ "${nodes_notready:-0}" -gt 0 ] && critical_count=$((critical_count + 1))
+        [ "${pods_crashloop:-0}" -gt 0 ] && critical_count=$((critical_count + 1))
+        [ "${pods_pending:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${deploys_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${ds_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${sts_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${pvc_notbound:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${helm_failed:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "$critical_count" -gt 0 ] && health_status="CRITICAL"
+        [ "$critical_count" -eq 0 ] && [ "$warning_count" -gt 0 ] && health_status="WARNINGS"
+
         local cluster_summary=$(cat << EOSUMMARY
 CLUSTER: ${cluster_name}
-  Nodes Total:       $(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Nodes Ready:       $(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
-  Pods Total:        $(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Pods Running:      $(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
-  Pods Not Running:  $(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
-  Deployments:       $(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  DaemonSets:        $(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Services:          $(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  PVCs:              $(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Namespaces:        $(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  Nodes: ${nodes_ready}/${nodes_total} Ready
+  Pods: ${pods_running}/${pods_total} Running
+  Deployments: $((deploys_total - deploys_notready))/${deploys_total} Ready
+  DaemonSets: $((ds_total - ds_notready))/${ds_total} Ready
+  StatefulSets: $((sts_total - sts_notready))/${sts_total} Ready
+  PVCs: $((pvc_total - pvc_notbound))/${pvc_total} Bound
+  Helm: $((helm_total - helm_failed))/${helm_total} Deployed
+  ---
+  Health Indicators:
+    Nodes NotReady: ${nodes_notready:-0}
+    Pods CrashLoop: ${pods_crashloop:-0}
+    Pods Pending: ${pods_pending:-0}
+  ---
+  HEALTH STATUS: ${health_status}
 EOSUMMARY
 )
         cluster_summaries+=("${cluster_summary}")
@@ -318,6 +360,29 @@ EOSUMMARY
         copy_pre_to_windows "${output_base_dir}"
     fi
 
+    # Update "latest" directory to point to this run's results
+    local latest_dir="${SCRIPT_DIR}/health-check-results/latest"
+    progress "Updating 'latest' directory..."
+
+    # Remove existing latest directory/symlink if exists
+    if [[ -L "${latest_dir}" ]]; then
+        rm -f "${latest_dir}"
+    elif [[ -d "${latest_dir}" ]]; then
+        rm -rf "${latest_dir}"
+    fi
+
+    # Create symlink to the new results (works on Linux/macOS)
+    # On Windows/Git Bash, copy instead of symlink
+    if ln -s "${output_base_dir}" "${latest_dir}" 2>/dev/null; then
+        success "Created symlink: latest -> $(basename "${output_base_dir}")"
+    else
+        # Fallback: copy directory for Windows compatibility
+        cp -r "${output_base_dir}" "${latest_dir}"
+        success "Created 'latest' directory copy"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Quick access: ${NC}${latest_dir}"
     echo ""
     display_banner "Pre-Change Health Check Complete!"
     echo ""
@@ -328,8 +393,8 @@ EOSUMMARY
 #===============================================================================
 
 main() {
-    # Parse arguments
-    if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+    # Handle help
+    if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
         show_usage
     fi
 
@@ -344,11 +409,16 @@ main() {
         exit 0
     fi
 
-    local config_file="$1"
+    # Default to ./clusters.conf if no argument provided
+    local config_file="${1:-./clusters.conf}"
 
     # Validate config file exists
     if [ ! -f "${config_file}" ]; then
         error "Configuration file not found: ${config_file}"
+        if [[ "$config_file" == "./clusters.conf" ]]; then
+            error "Create a clusters.conf file with cluster names (one per line)"
+            error "Or specify a config file: $0 <clusters.conf>"
+        fi
         exit 1
     fi
 

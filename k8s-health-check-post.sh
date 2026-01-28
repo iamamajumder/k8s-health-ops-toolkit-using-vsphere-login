@@ -64,11 +64,15 @@ show_usage() {
     cat << EOF
 Kubernetes Post-Change Health Check
 
-Usage: $0 <clusters.conf> <pre-results-dir>
+Usage: $0                              # Uses ./clusters.conf and latest PRE results
+       $0 <pre-results-dir>            # Uses ./clusters.conf with specific PRE results
+       $0 [clusters.conf] <pre-results-dir>
 
 Arguments:
-  clusters.conf     Path to configuration file with cluster names (one per line)
   pre-results-dir   Path to PRE-change results directory for comparison
+                    Default: ./health-check-results/latest/ (if not specified)
+  clusters.conf     Path to configuration file with cluster names (one per line)
+                    Default: ./clusters.conf (if not specified)
 
 Example clusters.conf:
   prod-workload-01
@@ -80,6 +84,9 @@ Features:
   - Auto-creates TMC contexts based on naming patterns
   - Caches cluster metadata for performance
   - Compares POST results with PRE results
+  - PRE vs POST comparison table with deltas
+  - Plain English summary of changes
+  - Enhanced health summary with HEALTHY/WARNINGS/CRITICAL status
 
 Cluster Naming Pattern:
   *-prod-[1-4]         → Production TMC context
@@ -101,14 +108,17 @@ Options:
   --clear-cache        Clear all cached data
 
 Examples:
-  # Run health check on all clusters and compare with PRE
+  # Run health check using default ./clusters.conf
+  $0 ./health-check-results/pre-20250122_143000
+
+  # Run health check with specific config file
   $0 ./clusters.conf ./health-check-results/pre-20250122_143000
 
   # With debug output
-  DEBUG=on $0 ./clusters.conf ./health-check-results/pre-20250122_143000
+  DEBUG=on $0 ./health-check-results/pre-20250122_143000
 
   # With TMC credentials in environment
-  TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass $0 ./clusters.conf ./health-check-results/pre-20250122_143000
+  TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass $0 ./health-check-results/pre-20250122_143000
 
   # View cache status
   $0 --cache-status
@@ -265,19 +275,56 @@ run_health_checks() {
 
         } > "${report_file}" 2>&1
 
-        # Capture Section 18 summary for console display
+        # Capture Section 18 summary with health indicators for console display
+        local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
+        local nodes_notready=$((nodes_total - nodes_ready))
+        local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+        local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff | tr -d ' ' || echo '0')
+        local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending | tr -d ' ' || echo '0')
+        local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
+        local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local ds_notready=$(kubectl get ds -A --no-headers 2>/dev/null | awk '$4 != $6 {count++} END{print count+0}' | tr -d ' ')
+        local sts_total=$(kubectl get sts -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local sts_notready=$(kubectl get sts -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
+        local pvc_total=$(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pvc_notbound=$(kubectl get pvc -A --no-headers 2>/dev/null | grep -v Bound | wc -l | tr -d ' ')
+        local helm_total=$(helm list -A --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
+        local helm_failed=$(helm list -A --failed --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
+
+        # Determine health status
+        local health_status="HEALTHY"
+        local critical_count=0
+        local warning_count=0
+        [ "${nodes_notready:-0}" -gt 0 ] && critical_count=$((critical_count + 1))
+        [ "${pods_crashloop:-0}" -gt 0 ] && critical_count=$((critical_count + 1))
+        [ "${pods_pending:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${deploys_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${ds_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${sts_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${pvc_notbound:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${helm_failed:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "$critical_count" -gt 0 ] && health_status="CRITICAL"
+        [ "$critical_count" -eq 0 ] && [ "$warning_count" -gt 0 ] && health_status="WARNINGS"
+
         local cluster_summary=$(cat << EOSUMMARY
 CLUSTER: ${cluster_name}
-  Nodes Total:       $(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Nodes Ready:       $(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
-  Pods Total:        $(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Pods Running:      $(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
-  Pods Not Running:  $(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
-  Deployments:       $(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  DaemonSets:        $(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Services:          $(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  PVCs:              $(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  Namespaces:        $(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  Nodes: ${nodes_ready}/${nodes_total} Ready
+  Pods: ${pods_running}/${pods_total} Running
+  Deployments: $((deploys_total - deploys_notready))/${deploys_total} Ready
+  DaemonSets: $((ds_total - ds_notready))/${ds_total} Ready
+  StatefulSets: $((sts_total - sts_notready))/${sts_total} Ready
+  PVCs: $((pvc_total - pvc_notbound))/${pvc_total} Bound
+  Helm: $((helm_total - helm_failed))/${helm_total} Deployed
+  ---
+  Health Indicators:
+    Nodes NotReady: ${nodes_notready:-0}
+    Pods CrashLoop: ${pods_crashloop:-0}
+    Pods Pending: ${pods_pending:-0}
+  ---
+  HEALTH STATUS: ${health_status}
 EOSUMMARY
 )
         cluster_summaries+=("${cluster_summary}")
@@ -360,6 +407,11 @@ EOSUMMARY
 #===============================================================================
 
 main() {
+    # Handle help
+    if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+        show_usage
+    fi
+
     # Handle cache management options first
     if [[ "$1" == "--cache-status" ]]; then
         get_cache_status
@@ -371,17 +423,62 @@ main() {
         exit 0
     fi
 
-    # Parse arguments
-    if [[ $# -lt 2 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
-        show_usage
+    # Parse arguments - flexible handling
+    # 0 args = use ./clusters.conf and ./health-check-results/latest/
+    # 1 arg  = pre-results-dir (use default ./clusters.conf)
+    # 2 args = clusters.conf + pre-results-dir OR pre-results-dir + clusters.conf
+    local config_file=""
+    local pre_results_dir=""
+    local default_latest_dir="./health-check-results/latest"
+
+    if [[ $# -eq 0 ]]; then
+        # No arguments - use defaults (latest directory)
+        config_file="./clusters.conf"
+        pre_results_dir="${default_latest_dir}"
+
+        # Check if latest directory exists
+        if [[ ! -d "${pre_results_dir}" ]]; then
+            error "No PRE-change results found in 'latest' directory"
+            error "Run the PRE-change health check first: ./k8s-health-check-pre.sh"
+            error "Or specify a PRE-results directory: $0 <pre-results-dir>"
+            exit 1
+        fi
+        progress "Using latest PRE-change results from: ${pre_results_dir}"
+    elif [[ $# -eq 1 ]]; then
+        # Single argument - must be pre-results-dir, use default clusters.conf
+        pre_results_dir="$1"
+        config_file="./clusters.conf"
+    elif [[ $# -ge 2 ]]; then
+        # Two arguments - detect which is which
+        if [[ -d "$1" ]]; then
+            # First arg is directory (pre-results-dir)
+            pre_results_dir="$1"
+            config_file="${2:-./clusters.conf}"
+        elif [[ -d "$2" ]]; then
+            # Second arg is directory (pre-results-dir)
+            config_file="$1"
+            pre_results_dir="$2"
+        else
+            # Default: assume traditional order (config_file, pre_results_dir)
+            config_file="$1"
+            pre_results_dir="$2"
+        fi
     fi
 
-    local config_file="$1"
-    local pre_results_dir="$2"
+    # Resolve symlinks to get actual directory path (for display purposes)
+    local actual_pre_dir="${pre_results_dir}"
+    if [[ -L "${pre_results_dir}" ]]; then
+        actual_pre_dir=$(readlink -f "${pre_results_dir}" 2>/dev/null || readlink "${pre_results_dir}" 2>/dev/null || echo "${pre_results_dir}")
+        progress "Resolved 'latest' symlink to: ${actual_pre_dir}"
+    fi
 
     # Validate config file exists
     if [ ! -f "${config_file}" ]; then
         error "Configuration file not found: ${config_file}"
+        if [[ "$config_file" == "./clusters.conf" ]]; then
+            error "Create a clusters.conf file with cluster names (one per line)"
+            error "Or specify a config file: $0 <clusters.conf> <pre-results-dir>"
+        fi
         exit 1
     fi
 
