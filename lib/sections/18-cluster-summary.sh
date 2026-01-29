@@ -7,17 +7,12 @@ run_section_18_cluster_summary() {
     echo "--- Resource Counts ---"
     echo ""
 
-    # Basic counts (use || true to prevent pipefail exit on grep -c returning 0)
+    # Basic counts
     local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' || true)
-    nodes_ready=$(echo "${nodes_ready}" | tr -d ' \n\r')
-    nodes_ready=${nodes_ready:-0}
+    local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
     local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running || true)
-    pods_running=$(echo "${pods_running}" | tr -d ' \n\r')
-    pods_running=${pods_running:-0}
-    local pods_notrunning=$(kubectl get pods -A --no-headers 2>/dev/null | { grep -v Running || true; } | { grep -v Completed || true; } | wc -l | tr -d ' ')
-    pods_notrunning=${pods_notrunning:-0}
+    local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+    local pods_notrunning=$(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
     local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
     local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
     local sts_total=$(kubectl get sts -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -59,8 +54,7 @@ run_section_18_cluster_summary() {
     local sts_notready=$(kubectl get sts -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
 
     # PVCs not bound
-    local pvc_notbound=$(kubectl get pvc -A --no-headers 2>/dev/null | { grep -v Bound || true; } | wc -l | tr -d ' ')
-    pvc_notbound=${pvc_notbound:-0}
+    local pvc_notbound=$(kubectl get pvc -A --no-headers 2>/dev/null | grep -v Bound | wc -l | tr -d ' ')
 
     # Helm releases failed
     local helm_failed=$(helm list -A --failed --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
