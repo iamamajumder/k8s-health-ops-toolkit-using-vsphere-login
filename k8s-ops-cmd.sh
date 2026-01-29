@@ -1,0 +1,509 @@
+#!/bin/bash
+#===============================================================================
+# Kubernetes Multi-Cluster Ops Command Script v3.4
+# Purpose: Execute the same command across all clusters in clusters.conf
+#          with proper TMC context/kubeconfig setup and parallel execution
+#===============================================================================
+
+set +e          # Disable exit-on-error
+set -o pipefail # Fail on pipe errors
+
+# Preserve PATH from parent shell
+export PATH="${PATH}"
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source library modules
+source "${SCRIPT_DIR}/lib/common.sh"
+source "${SCRIPT_DIR}/lib/config.sh"
+source "${SCRIPT_DIR}/lib/tmc-context.sh"
+source "${SCRIPT_DIR}/lib/tmc.sh"
+
+#===============================================================================
+# Script Configuration
+#===============================================================================
+
+DEFAULT_TIMEOUT=30          # Default command timeout in seconds
+DEFAULT_CONFIG="./clusters.conf"
+OUTPUT_DIR="${SCRIPT_DIR}/ops-results"
+
+#===============================================================================
+# Usage Function
+#===============================================================================
+
+show_usage() {
+    cat << EOF
+Kubernetes Multi-Cluster Ops Command Script v3.4
+
+Usage:
+  $0 "<command>" [clusters.conf]
+
+Description:
+  Execute the same command across all clusters defined in clusters.conf.
+  Commands run in parallel for faster execution.
+
+Arguments:
+  <command>         The command to execute on each cluster (required)
+                    The command runs with KUBECONFIG set for each cluster
+  clusters.conf     Path to configuration file with cluster names (one per line)
+                    Default: ./clusters.conf
+
+Options:
+  -h, --help        Show this help message
+  --timeout <sec>   Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
+  --sequential      Run commands sequentially instead of parallel
+  --output-only     Minimal terminal output, save full results to file
+
+Examples:
+  # Get Contour version on all clusters
+  $0 "kubectl get deploy -n projectcontour contour -o jsonpath='{.spec.template.spec.containers[0].image}'"
+
+  # Check cert-manager version
+  $0 "helm list -n cert-manager -o json | jq -r '.[0].chart'"
+
+  # Get node count per cluster
+  $0 "kubectl get nodes --no-headers | wc -l"
+
+  # Check Kubernetes version
+  $0 "kubectl version --short 2>/dev/null | grep Server"
+
+  # Get Antrea pod count
+  $0 "kubectl get pods -n kube-system -l app=antrea --no-headers | wc -l"
+
+  # With custom config and timeout
+  $0 --timeout 60 "kubectl get pods -A" ./my-clusters.conf
+
+  # Sequential execution (one cluster at a time)
+  $0 --sequential "kubectl get nodes"
+
+Environment Variables:
+  TMC_SELF_MANAGED_USERNAME    TMC username (optional, will prompt if not set)
+  TMC_SELF_MANAGED_PASSWORD    TMC password (optional, will prompt if not set)
+  DEBUG                        Set to 'on' for verbose output
+
+EOF
+    exit 0
+}
+
+#===============================================================================
+# Prerequisite Checks
+#===============================================================================
+
+check_prerequisites() {
+    if ! command_exists kubectl; then
+        error "kubectl command not found in PATH"
+        exit 1
+    fi
+
+    if ! command_exists tanzu; then
+        error "tanzu CLI not found in PATH"
+        exit 1
+    fi
+}
+
+#===============================================================================
+# Execute Command on Single Cluster
+#===============================================================================
+
+execute_on_cluster() {
+    local cluster_name="$1"
+    local command="$2"
+    local timeout_sec="$3"
+    local output_file="$4"
+
+    local status="SUCCESS"
+    local output=""
+    local exit_code=0
+
+    # Create temp directory for this cluster's kubeconfig
+    local temp_dir=$(mktemp -d)
+    local kubeconfig_file="${temp_dir}/kubeconfig"
+
+    # Setup TMC context and fetch kubeconfig
+    if ! ensure_tmc_context "${cluster_name}" >/dev/null 2>&1; then
+        status="FAILED"
+        output="Failed to create/verify TMC context"
+        exit_code=1
+    else
+        if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
+            status="FAILED"
+            output="Failed to fetch kubeconfig"
+            exit_code=1
+        else
+            # Execute the command with timeout
+            export KUBECONFIG="${kubeconfig_file}"
+
+            if command_exists timeout; then
+                output=$(timeout "${timeout_sec}" bash -c "${command}" 2>&1) || exit_code=$?
+            else
+                # Fallback for systems without timeout command (e.g., some macOS)
+                output=$(bash -c "${command}" 2>&1) || exit_code=$?
+            fi
+
+            if [ ${exit_code} -ne 0 ]; then
+                status="FAILED"
+            fi
+        fi
+    fi
+
+    # Write results to output file (atomic write)
+    {
+        echo "CLUSTER: ${cluster_name}"
+        echo "STATUS: ${status}"
+        echo "EXIT_CODE: ${exit_code}"
+        echo "OUTPUT:"
+        echo "${output}"
+        echo "---END---"
+    } >> "${output_file}"
+
+    # Cleanup
+    rm -rf "${temp_dir}"
+
+    return ${exit_code}
+}
+
+#===============================================================================
+# Run Commands in Parallel
+#===============================================================================
+
+run_parallel() {
+    local command="$1"
+    local config_file="$2"
+    local timeout_sec="$3"
+    local results_dir="$4"
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+
+    # Create temp file for collecting results
+    local results_file="${results_dir}/raw_results.txt"
+    > "${results_file}"
+
+    # Array to store PIDs
+    declare -A pids
+
+    progress "Launching commands on ${cluster_count} clusters in parallel..."
+
+    # Launch all commands in parallel
+    local idx=0
+    while IFS= read -r cluster_name; do
+        idx=$((idx + 1))
+        debug "Launching command on cluster ${idx}/${cluster_count}: ${cluster_name}"
+
+        execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" &
+        pids["${cluster_name}"]=$!
+    done < <(echo "${cluster_list}")
+
+    # Wait for all processes and collect exit codes
+    declare -A exit_codes
+    for cluster_name in "${!pids[@]}"; do
+        wait ${pids[$cluster_name]} 2>/dev/null
+        exit_codes["${cluster_name}"]=$?
+    done
+
+    # Return results file path
+    echo "${results_file}"
+}
+
+#===============================================================================
+# Run Commands Sequentially
+#===============================================================================
+
+run_sequential() {
+    local command="$1"
+    local config_file="$2"
+    local timeout_sec="$3"
+    local results_dir="$4"
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+
+    # Create temp file for collecting results
+    local results_file="${results_dir}/raw_results.txt"
+    > "${results_file}"
+
+    progress "Running commands on ${cluster_count} clusters sequentially..."
+
+    local idx=0
+    while IFS= read -r cluster_name; do
+        idx=$((idx + 1))
+        echo -e "${MAGENTA}[${idx}/${cluster_count}]${NC} ${cluster_name}..."
+
+        execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}"
+    done < <(echo "${cluster_list}")
+
+    echo "${results_file}"
+}
+
+#===============================================================================
+# Parse and Display Results
+#===============================================================================
+
+display_results() {
+    local results_file="$1"
+    local output_file="$2"
+    local command="$3"
+    local output_only="$4"
+
+    local success_count=0
+    local failed_count=0
+    local current_cluster=""
+    local current_status=""
+    local current_output=""
+    local in_output=false
+
+    # Parse results and display
+    if [[ "${output_only}" != "true" ]]; then
+        echo ""
+        print_section "Command Results"
+    fi
+
+    # Write header to output file
+    {
+        echo "================================================================================"
+        echo "MULTI-CLUSTER OPS COMMAND RESULTS"
+        echo "================================================================================"
+        echo "Timestamp: $(get_formatted_timestamp)"
+        echo "Command: ${command}"
+        echo "================================================================================"
+        echo ""
+    } > "${output_file}"
+
+    # Parse the raw results file
+    while IFS= read -r line; do
+        if [[ "${line}" == "CLUSTER: "* ]]; then
+            # Save previous cluster if exists
+            if [[ -n "${current_cluster}" ]]; then
+                # Write to file
+                {
+                    echo "CLUSTER: ${current_cluster}"
+                    echo "STATUS: ${current_status}"
+                    echo "OUTPUT:"
+                    echo "${current_output}"
+                    echo ""
+                    echo "---"
+                    echo ""
+                } >> "${output_file}"
+
+                # Display to terminal if not output-only
+                if [[ "${output_only}" != "true" ]]; then
+                    if [[ "${current_status}" == "SUCCESS" ]]; then
+                        echo -e "${GREEN}[SUCCESS]${NC} ${YELLOW}${current_cluster}${NC}"
+                    else
+                        echo -e "${RED}[FAILED]${NC} ${YELLOW}${current_cluster}${NC}"
+                    fi
+                    echo "────────────────────────────────────────"
+                    echo "${current_output}"
+                    echo ""
+                fi
+            fi
+
+            current_cluster="${line#CLUSTER: }"
+            current_status=""
+            current_output=""
+            in_output=false
+        elif [[ "${line}" == "STATUS: "* ]]; then
+            current_status="${line#STATUS: }"
+            if [[ "${current_status}" == "SUCCESS" ]]; then
+                success_count=$((success_count + 1))
+            else
+                failed_count=$((failed_count + 1))
+            fi
+        elif [[ "${line}" == "OUTPUT:" ]]; then
+            in_output=true
+        elif [[ "${line}" == "---END---" ]]; then
+            in_output=false
+        elif [[ "${in_output}" == "true" ]]; then
+            if [[ -n "${current_output}" ]]; then
+                current_output="${current_output}
+${line}"
+            else
+                current_output="${line}"
+            fi
+        fi
+    done < "${results_file}"
+
+    # Process last cluster
+    if [[ -n "${current_cluster}" ]]; then
+        {
+            echo "CLUSTER: ${current_cluster}"
+            echo "STATUS: ${current_status}"
+            echo "OUTPUT:"
+            echo "${current_output}"
+            echo ""
+            echo "---"
+            echo ""
+        } >> "${output_file}"
+
+        if [[ "${output_only}" != "true" ]]; then
+            if [[ "${current_status}" == "SUCCESS" ]]; then
+                echo -e "${GREEN}[SUCCESS]${NC} ${YELLOW}${current_cluster}${NC}"
+            else
+                echo -e "${RED}[FAILED]${NC} ${YELLOW}${current_cluster}${NC}"
+            fi
+            echo "────────────────────────────────────────"
+            echo "${current_output}"
+            echo ""
+        fi
+    fi
+
+    # Write summary to file
+    {
+        echo "================================================================================"
+        echo "SUMMARY"
+        echo "================================================================================"
+        echo "Total: $((success_count + failed_count))"
+        echo "Success: ${success_count}"
+        echo "Failed: ${failed_count}"
+    } >> "${output_file}"
+
+    # Display summary
+    echo ""
+    print_section "Summary"
+    echo -e "${CYAN}Total Clusters:${NC} $((success_count + failed_count))"
+    echo -e "${GREEN}Successful:${NC} ${success_count}"
+    if [ ${failed_count} -gt 0 ]; then
+        echo -e "${RED}Failed:${NC} ${failed_count}"
+    else
+        echo -e "Failed: ${failed_count}"
+    fi
+    echo ""
+    echo -e "${CYAN}Results saved to:${NC} ${output_file}"
+}
+
+#===============================================================================
+# Main Function
+#===============================================================================
+
+run_ops_command() {
+    local command="$1"
+    local config_file="$2"
+    local timeout_sec="$3"
+    local parallel="$4"
+    local output_only="$5"
+
+    # Validate config file
+    if [[ ! -f "${config_file}" ]]; then
+        error "Configuration file not found: ${config_file}"
+        exit 1
+    fi
+
+    # Load and validate configuration
+    if ! load_configuration "${config_file}"; then
+        exit 1
+    fi
+
+    local cluster_count=$(count_clusters "${config_file}")
+    if [ "${cluster_count}" -eq 0 ]; then
+        error "No clusters found in configuration file"
+        exit 1
+    fi
+
+    # Create output directory
+    local timestamp=$(get_timestamp)
+    local results_dir="${OUTPUT_DIR}/ops-${timestamp}"
+    mkdir -p "${results_dir}"
+
+    local output_file="${results_dir}/output.txt"
+
+    # Display banner
+    echo ""
+    print_section "Multi-Cluster Ops Command"
+    display_info "Command" "${command}"
+    display_info "Clusters" "${cluster_count}"
+    display_info "Timeout" "${timeout_sec}s"
+    display_info "Execution" "$([ "${parallel}" == "true" ] && echo "Parallel" || echo "Sequential")"
+    echo ""
+
+    # Execute commands
+    local results_file
+    if [[ "${parallel}" == "true" ]]; then
+        results_file=$(run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}")
+    else
+        results_file=$(run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}")
+    fi
+
+    # Display and save results
+    display_results "${results_file}" "${output_file}" "${command}" "${output_only}"
+
+    # Cleanup temp results file
+    rm -f "${results_file}"
+
+    echo ""
+    display_banner "Ops Command Complete!"
+    echo ""
+}
+
+#===============================================================================
+# Argument Parsing
+#===============================================================================
+
+parse_arguments() {
+    local command=""
+    local config_file="${DEFAULT_CONFIG}"
+    local timeout_sec="${DEFAULT_TIMEOUT}"
+    local parallel="true"
+    local output_only="false"
+
+    # Parse named arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_usage
+                ;;
+            --timeout)
+                shift
+                if [[ -n "$1" ]] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    timeout_sec="$1"
+                else
+                    error "Invalid timeout value: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+            --sequential)
+                parallel="false"
+                shift
+                ;;
+            --output-only)
+                output_only="true"
+                shift
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_usage
+                ;;
+            *)
+                # Positional arguments
+                if [[ -z "${command}" ]]; then
+                    command="$1"
+                else
+                    config_file="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate command is provided
+    if [[ -z "${command}" ]]; then
+        error "No command specified"
+        echo ""
+        show_usage
+    fi
+
+    # Run the ops command
+    run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}"
+}
+
+#===============================================================================
+# Main Entry Point
+#===============================================================================
+
+main() {
+    check_prerequisites
+    parse_arguments "$@"
+}
+
+main "$@"

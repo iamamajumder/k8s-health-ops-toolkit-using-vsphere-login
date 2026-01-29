@@ -1,8 +1,19 @@
 # Kubernetes Cluster Health Check Tool
 
-**Version 3.3** - Unified Script with TMC Auto-Discovery and PRE/POST Comparison
+**Version 3.4** - Automated Upgrades & Multi-Cluster Operations
 
 ---
+
+## What's New in v3.4
+
+- **Automated Cluster Upgrade**: New `k8s-cluster-upgrade.sh` with health-gated upgrades
+  - PRE-upgrade health validation (HEALTHY=auto, WARNINGS=prompt, CRITICAL=abort)
+  - TMC-based upgrade execution with progress monitoring
+  - POST-upgrade health comparison with detailed reports
+- **Multi-Cluster Ops Command**: New `k8s-ops-cmd.sh` for running commands across all clusters
+  - Parallel execution for faster results
+  - Formatted output to terminal and file
+  - Reuses existing TMC context/kubeconfig caching
 
 ## What's New in v3.3
 
@@ -146,6 +157,161 @@ DEBUG=on ./k8s-health-check.sh --mode post
 # Run grep pattern validation tests
 ./tests/test-grep-patterns.sh
 ```
+
+---
+
+## Automated Cluster Upgrade (v3.4)
+
+The `k8s-cluster-upgrade.sh` script automates cluster upgrades with health validation.
+
+### Upgrade Workflow
+
+```
+PRE-Upgrade Health Check
+         │
+         ▼
+┌─────────────────────────┐
+│  HEALTHY   → Auto-proceed with upgrade
+│  WARNINGS  → Prompt user for confirmation
+│  CRITICAL  → Abort upgrade (fix issues first)
+└─────────────────────────┘
+         │
+         ▼
+Execute TMC Upgrade (--latest)
+         │
+         ▼
+Monitor Progress (polling every 30s)
+         │
+         ▼
+POST-Upgrade Health Check + Comparison
+```
+
+### Usage
+
+```bash
+# Make script executable
+chmod +x k8s-cluster-upgrade.sh
+
+# Basic usage (uses ./clusters.conf)
+./k8s-cluster-upgrade.sh
+
+# With specific config file
+./k8s-cluster-upgrade.sh ./upgrade-clusters.conf
+
+# Dry run (show what would be upgraded without executing)
+./k8s-cluster-upgrade.sh --dry-run
+
+# Skip health check prompts (auto-proceed on WARNINGS)
+./k8s-cluster-upgrade.sh --force
+
+# Custom timeout (default: 30 minutes)
+./k8s-cluster-upgrade.sh --timeout 45
+
+# Skip PRE-upgrade health check (not recommended)
+./k8s-cluster-upgrade.sh --skip-health-check
+```
+
+### Upgrade Output Structure
+
+```
+upgrade-results/
+└── upgrade-YYYYMMDD_HHMMSS/
+    ├── cluster-name-1/
+    │   ├── pre-upgrade-health.txt
+    │   ├── upgrade-log.txt
+    │   ├── post-upgrade-health.txt
+    │   └── comparison-report.txt
+    └── cluster-name-2/
+        └── ...
+```
+
+### Health Decision Matrix
+
+| PRE-Upgrade Status | Behavior |
+|-------------------|----------|
+| **HEALTHY** | Automatically proceeds with upgrade |
+| **WARNINGS** | Prompts for confirmation (use `--force` to skip) |
+| **CRITICAL** | Aborts upgrade with error message |
+
+---
+
+## Multi-Cluster Ops Command (v3.4)
+
+The `k8s-ops-cmd.sh` script executes commands across all clusters in parallel.
+
+### Usage
+
+```bash
+# Make script executable
+chmod +x k8s-ops-cmd.sh
+
+# Get Contour version on all clusters
+./k8s-ops-cmd.sh "kubectl get deploy -n projectcontour contour -o jsonpath='{.spec.template.spec.containers[0].image}'"
+
+# Check cert-manager version
+./k8s-ops-cmd.sh "helm list -n cert-manager -o json | jq -r '.[0].chart'"
+
+# Get node count per cluster
+./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
+
+# Check Kubernetes version
+./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
+
+# Get Antrea pod count
+./k8s-ops-cmd.sh "kubectl get pods -n kube-system -l app=antrea --no-headers | wc -l"
+
+# With custom config and timeout
+./k8s-ops-cmd.sh --timeout 60 "kubectl get pods -A" ./my-clusters.conf
+
+# Sequential execution (one cluster at a time)
+./k8s-ops-cmd.sh --sequential "kubectl get nodes"
+
+# Minimal terminal output (results saved to file only)
+./k8s-ops-cmd.sh --output-only "kubectl get nodes"
+```
+
+### Sample Output
+
+```
+================================================================================
+  MULTI-CLUSTER OPS COMMAND
+================================================================================
+Command: kubectl get nodes --no-headers | wc -l
+Clusters: 5
+================================================================================
+
+[SUCCESS] svcs-k8s-1-prod-1
+────────────────────────────────────────
+5
+
+[SUCCESS] svcs-k8s-2-prod-2
+────────────────────────────────────────
+5
+
+[SUCCESS] app-k8s-1-uat-1
+────────────────────────────────────────
+3
+
+================================================================================
+  SUMMARY
+================================================================================
+Total Clusters: 5
+Successful: 5
+Failed: 0
+
+Results saved to: ops-results/ops-20260129_143000/output.txt
+================================================================================
+```
+
+### Ops Output Structure
+
+```
+ops-results/
+└── ops-YYYYMMDD_HHMMSS/
+    └── output.txt     # Full results with cluster headers
+```
+
+---
 
 ### Legacy Scripts (v3.2 Compatibility)
 
@@ -302,6 +468,8 @@ health-check-results/
 ```
 k8-health-check/
 ├── k8s-health-check.sh           # Unified health check script (v3.3)
+├── k8s-cluster-upgrade.sh        # Automated cluster upgrade (v3.4)
+├── k8s-ops-cmd.sh                # Multi-cluster ops command (v3.4)
 ├── clusters.conf                  # Cluster configuration file
 ├── README.md                      # This documentation
 ├── RELEASE.md                     # Release notes and changelog
@@ -310,7 +478,7 @@ k8-health-check/
 ├── lib/                           # Library modules
 │   ├── common.sh                  # Shared utilities & logging
 │   ├── config.sh                  # Configuration parser
-│   ├── health.sh                  # Health calculations (NEW in v3.3)
+│   ├── health.sh                  # Health calculations (v3.3)
 │   ├── tmc-context.sh             # TMC context auto-creation
 │   ├── tmc.sh                     # TMC integration & auto-discovery
 │   ├── comparison.sh              # PRE/POST comparison logic
@@ -321,10 +489,12 @@ k8-health-check/
 │       ├── ...
 │       └── 18-cluster-summary.sh
 │
-├── tests/                         # Test scripts (NEW in v3.3)
+├── tests/                         # Test scripts (v3.3)
 │   └── test-grep-patterns.sh      # Pattern validation tests
 │
-├── health-check-results/          # Output directory (auto-created)
+├── health-check-results/          # Health check output (auto-created)
+├── upgrade-results/               # Upgrade results output (auto-created)
+├── ops-results/                   # Ops command output (auto-created)
 │
 └── Archive/                       # Archived versions
     ├── v3.2/                      # Legacy PRE/POST scripts
@@ -388,6 +558,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 3.4 | 2026-01-29 | Automated cluster upgrade, multi-cluster ops command |
 | 3.3 | 2026-01-29 | Unified script with --mode flag, lib/health.sh module, test suite |
 | 3.2.6 | 2026-01-29 | Fixed grep -c pattern bug causing "0\n0" arithmetic errors |
 | 3.2 | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |

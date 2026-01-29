@@ -1,5 +1,98 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.4 (2026-01-29)
+
+### New Scripts
+
+#### 1. Automated Cluster Upgrade (`k8s-cluster-upgrade.sh`)
+
+Health-gated cluster upgrades with monitoring and comparison.
+
+**Features:**
+- **PRE-upgrade health validation** with intelligent decision gates:
+  - `HEALTHY` → Auto-proceed with upgrade
+  - `WARNINGS` → Prompt user for confirmation (use `--force` to skip)
+  - `CRITICAL` → Abort upgrade with error message
+- **TMC-based upgrade execution** using `tanzu tmc cluster upgrade --latest`
+- **Progress monitoring** with 30-second polling interval
+- **POST-upgrade health comparison** with detailed PRE vs POST report
+- **Continues on failure** to process remaining clusters
+
+**Usage:**
+```bash
+./k8s-cluster-upgrade.sh                    # Uses ./clusters.conf
+./k8s-cluster-upgrade.sh --dry-run          # Preview without executing
+./k8s-cluster-upgrade.sh --force            # Skip prompts for WARNINGS
+./k8s-cluster-upgrade.sh --timeout 45       # Custom timeout (default: 30 min)
+./k8s-cluster-upgrade.sh --skip-health-check # Skip PRE health check
+```
+
+**Output Structure:**
+```
+upgrade-results/
+└── upgrade-YYYYMMDD_HHMMSS/
+    └── cluster-name/
+        ├── pre-upgrade-health.txt
+        ├── upgrade-log.txt
+        ├── post-upgrade-health.txt
+        └── comparison-report.txt
+```
+
+#### 2. Multi-Cluster Ops Command (`k8s-ops-cmd.sh`)
+
+Execute commands across all clusters with parallel execution.
+
+**Features:**
+- **Parallel execution** by default for faster results
+- **Sequential mode** available with `--sequential` flag
+- **Automatic TMC context/kubeconfig** setup per cluster
+- **Formatted output** to terminal and file
+- **Timeout support** for long-running commands
+
+**Usage:**
+```bash
+# Get Contour version
+./k8s-ops-cmd.sh "kubectl get deploy -n projectcontour contour -o jsonpath='{.spec.template.spec.containers[0].image}'"
+
+# Check Kubernetes version
+./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
+
+# Get node count
+./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
+
+# With custom timeout
+./k8s-ops-cmd.sh --timeout 60 "kubectl get pods -A"
+
+# Sequential execution
+./k8s-ops-cmd.sh --sequential "kubectl get nodes"
+```
+
+**Output Structure:**
+```
+ops-results/
+└── ops-YYYYMMDD_HHMMSS/
+    └── output.txt
+```
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `k8s-cluster-upgrade.sh` | Automated cluster upgrade with health gates |
+| `k8s-ops-cmd.sh` | Multi-cluster command execution |
+
+### Reused Modules
+
+Both new scripts leverage existing library modules:
+- `lib/common.sh` - Logging, colors, utilities
+- `lib/config.sh` - Cluster list parsing
+- `lib/tmc-context.sh` - TMC context management and caching
+- `lib/tmc.sh` - Kubeconfig fetching and metadata discovery
+- `lib/health.sh` - Health metrics collection and status calculation
+- `lib/comparison.sh` - PRE vs POST comparison reports
+
+---
+
 ## Version 3.3 (2026-01-29)
 
 ### Major Refactoring
