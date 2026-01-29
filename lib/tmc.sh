@@ -23,7 +23,7 @@ KUBECONFIG_CACHE_DIR="${CACHE_DIR}/kubeconfigs"
 
 # Cache expiry times (in seconds)
 METADATA_CACHE_EXPIRY=604800    # 7 days - metadata rarely changes
-KUBECONFIG_CACHE_EXPIRY=86400   # 24 hours - kubeconfig should be refreshed daily
+KUBECONFIG_CACHE_EXPIRY=43200   # 12 hours - kubeconfig refreshed twice daily
 
 # Initialize cache directory
 init_cache_dir() {

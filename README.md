@@ -292,7 +292,7 @@ health-check-results/
 | Cache Type | Location | Expiry |
 |------------|----------|--------|
 | Metadata | `~/.k8s-health-check/metadata.cache` | 7 days |
-| Kubeconfig | `~/.k8s-health-check/kubeconfigs/` | 24 hours |
+| Kubeconfig | `~/.k8s-health-check/kubeconfigs/` | 12 hours |
 | TMC Context | `~/.k8s-health-check/context-timestamps.cache` | 12 hours |
 
 ---
