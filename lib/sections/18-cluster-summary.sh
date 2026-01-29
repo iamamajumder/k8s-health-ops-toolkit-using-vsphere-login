@@ -9,9 +9,15 @@ run_section_18_cluster_summary() {
 
     # Basic counts
     local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
+    nodes_total=${nodes_total:-0}
+    local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' || true)
+    nodes_ready=$(echo "${nodes_ready}" | tr -d ' \n\r')
+    nodes_ready=${nodes_ready:-0}
     local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+    pods_total=${pods_total:-0}
+    local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running || true)
+    pods_running=$(echo "${pods_running}" | tr -d ' \n\r')
+    pods_running=${pods_running:-0}
     local pods_notrunning=$(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
     local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
     local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -40,9 +46,15 @@ run_section_18_cluster_summary() {
 
     # Health indicator calculations
     local nodes_notready=$((nodes_total - nodes_ready))
-    local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff | tr -d ' ' || echo '0')
-    local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending | tr -d ' ' || echo '0')
-    local pods_completed=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Completed | tr -d ' ' || echo '0')
+    local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff || true)
+    pods_crashloop=$(echo "${pods_crashloop}" | tr -d ' \n\r')
+    pods_crashloop=${pods_crashloop:-0}
+    local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending || true)
+    pods_pending=$(echo "${pods_pending}" | tr -d ' \n\r')
+    pods_pending=${pods_pending:-0}
+    local pods_completed=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Completed || true)
+    pods_completed=$(echo "${pods_completed}" | tr -d ' \n\r')
+    pods_completed=${pods_completed:-0}
 
     # Deployments not ready (READY column shows X/Y where X != Y)
     local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
