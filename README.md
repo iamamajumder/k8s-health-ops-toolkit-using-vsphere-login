@@ -95,10 +95,10 @@ chmod +x k8s-health-check.sh
 ### PRE-Change Health Check
 
 ```bash
-# Using default ./clusters.conf
+# Default clusters.conf
 ./k8s-health-check.sh --mode pre
 
-# Using specific config file
+# Custom config file
 ./k8s-health-check.sh --mode pre ./my-clusters.conf
 
 # With debug output
@@ -110,17 +110,21 @@ TMC_SELF_MANAGED_PASSWORD=mypass \
 ./k8s-health-check.sh --mode pre
 ```
 
-### POST-Change Health Check
+### POST-Change Health Check (with comparison)
 
 ```bash
-# Simplest: Use latest PRE results (recommended for recent PRE runs)
+# Use latest PRE results (default)
 ./k8s-health-check.sh --mode post
 
-# Using specific PRE results directory
+# Custom config file + latest PRE results
+./k8s-health-check.sh --mode post ./clusters.conf
+
+# Compare with specific older PRE results
 ./k8s-health-check.sh --mode post ./health-check-results/pre-20260128_120000
 
-# Using specific config file and PRE results
+# Both custom config and specific PRE results (either order works)
 ./k8s-health-check.sh --mode post ./clusters.conf ./health-check-results/pre-20260128_120000
+./k8s-health-check.sh --mode post ./health-check-results/pre-20260128_120000 ./clusters.conf
 
 # With debug output
 DEBUG=on ./k8s-health-check.sh --mode post
