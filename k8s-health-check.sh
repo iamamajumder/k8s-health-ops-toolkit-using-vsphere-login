@@ -22,7 +22,6 @@ source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/tmc-context.sh"
 source "${SCRIPT_DIR}/lib/tmc.sh"
-source "${SCRIPT_DIR}/lib/scp.sh"
 source "${SCRIPT_DIR}/lib/health.sh"
 source "${SCRIPT_DIR}/lib/comparison.sh"
 
@@ -111,11 +110,6 @@ Environment Variables:
   TMC_SELF_MANAGED_USERNAME    TMC username (optional, will prompt if not set)
   TMC_SELF_MANAGED_PASSWORD    TMC password (optional, will prompt if not set)
   DEBUG                        Set to 'on' for verbose output
-  WINDOWS_SCP_ENABLED          Set to 'true' to enable Windows SCP transfer
-  WINDOWS_SCP_USER             Windows username for SCP
-  WINDOWS_SCP_HOST             Windows hostname for SCP
-  WINDOWS_PRE_PATH             Windows destination path for PRE reports
-  WINDOWS_POST_PATH            Windows destination path for POST reports
 
 Options:
   -h, --help           Show this help message
@@ -382,17 +376,6 @@ run_health_checks() {
         for summary in "${cluster_summaries[@]}"; do
             echo -e "${CYAN}${summary}${NC}"
         done
-    fi
-
-    # Optional: Copy to Windows
-    if [[ -n "${WINDOWS_SCP_ENABLED:-}" ]] && [[ "${WINDOWS_SCP_ENABLED}" == "true" ]]; then
-        echo ""
-        progress "Copying results to Windows machine..."
-        if [[ "${mode}" == "pre" ]]; then
-            copy_pre_to_windows "${output_base_dir}"
-        else
-            copy_post_to_windows "${output_base_dir}"
-        fi
     fi
 
     # PRE mode: Update "latest" directory

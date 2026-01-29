@@ -164,11 +164,6 @@ The old separate PRE/POST scripts are still available for backwards compatibilit
 | `TMC_SELF_MANAGED_USERNAME` | TMC username | No (prompts if not set) |
 | `TMC_SELF_MANAGED_PASSWORD` | TMC password | No (prompts if not set) |
 | `DEBUG` | Enable verbose output (`on`/`off`) | No |
-| `WINDOWS_SCP_ENABLED` | Enable Windows SCP transfer (`true`/`false`) | No |
-| `WINDOWS_SCP_USER` | Windows username for SCP | If SCP enabled |
-| `WINDOWS_SCP_HOST` | Windows hostname/IP | If SCP enabled |
-| `WINDOWS_PRE_PATH` | Windows PRE reports path | If SCP enabled |
-| `WINDOWS_POST_PATH` | Windows POST reports path | If SCP enabled |
 
 ---
 
@@ -318,7 +313,6 @@ k8-health-check/
 │   ├── health.sh                  # Health calculations (NEW in v3.3)
 │   ├── tmc-context.sh             # TMC context auto-creation
 │   ├── tmc.sh                     # TMC integration & auto-discovery
-│   ├── scp.sh                     # Optional Windows SCP transfer
 │   ├── comparison.sh              # PRE/POST comparison logic
 │   │
 │   └── sections/                  # Health check modules (18 sections)

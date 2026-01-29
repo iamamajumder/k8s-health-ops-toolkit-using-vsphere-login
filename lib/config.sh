@@ -114,11 +114,6 @@ display_configuration() {
         echo -e "  Output Dir:    ${output_dir}"
     fi
 
-    if [ -n "${WINDOWS_SCP_ENABLED}" ] && [ "${WINDOWS_SCP_ENABLED}" == "true" ]; then
-        if [ -n "${WINDOWS_SCP_USER}" ] && [ -n "${WINDOWS_SCP_HOST}" ]; then
-            echo -e "  Windows SCP:   ${WINDOWS_SCP_USER}@${WINDOWS_SCP_HOST}"
-        fi
-    fi
     echo ""
 }
 
