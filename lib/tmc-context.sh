@@ -43,10 +43,12 @@ save_context_timestamp() {
 
     init_context_cache
 
-    # Remove old entry if exists
+    # Remove old entry if exists and create new file with remaining entries
     if [[ -f "${CONTEXT_TIMESTAMP_FILE}" ]]; then
-        grep -v "^${context_name}:" "${CONTEXT_TIMESTAMP_FILE}" > "${CONTEXT_TIMESTAMP_FILE}.tmp" 2>/dev/null && \
-        mv "${CONTEXT_TIMESTAMP_FILE}.tmp" "${CONTEXT_TIMESTAMP_FILE}" || true
+        # Create temp file with all entries EXCEPT the current context
+        grep -v "^${context_name}:" "${CONTEXT_TIMESTAMP_FILE}" > "${CONTEXT_TIMESTAMP_FILE}.tmp" 2>/dev/null || true
+        # Move temp file to replace original (even if empty)
+        mv -f "${CONTEXT_TIMESTAMP_FILE}.tmp" "${CONTEXT_TIMESTAMP_FILE}" 2>/dev/null || rm -f "${CONTEXT_TIMESTAMP_FILE}"
     fi
 
     # Add new entry

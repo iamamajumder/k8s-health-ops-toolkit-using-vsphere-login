@@ -138,7 +138,6 @@ run_health_checks() {
     print_section "Kubernetes Pre-Change Health Check"
 
     display_info "Configuration File" "${config_file}"
-    display_info "Script Directory" "${SCRIPT_DIR}"
     display_info "Started" "$(get_formatted_timestamp)"
     echo ""
 
@@ -152,9 +151,6 @@ run_health_checks() {
     local timestamp=$(get_timestamp)
     local output_base_dir="${SCRIPT_DIR}/health-check-results/pre-${timestamp}"
     mkdir -p "${output_base_dir}"
-
-    progress "Output directory: ${output_base_dir}"
-    echo ""
 
     # Get cluster list
     local cluster_list=$(get_cluster_list "${config_file}")
@@ -187,7 +183,6 @@ run_health_checks() {
 
         echo ""
         echo -e "${MAGENTA}[${current}/${cluster_count}]${NC} Processing: ${YELLOW}${cluster_name}${NC}"
-        echo ""
 
         print_section "Processing Cluster: ${cluster_name}"
 
@@ -265,8 +260,12 @@ run_health_checks() {
         local nodes_notready=$((nodes_total - nodes_ready))
         local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
         local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
-        local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff | tr -d ' ' || echo '0')
-        local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending | tr -d ' ' || echo '0')
+        local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff || true)
+        pods_crashloop=$(echo "${pods_crashloop}" | tr -d ' \n\r')
+        pods_crashloop=${pods_crashloop:-0}
+        local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending || true)
+        pods_pending=$(echo "${pods_pending}" | tr -d ' \n\r')
+        pods_pending=${pods_pending:-0}
         local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
         local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
         local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -325,7 +324,6 @@ EOSUMMARY
 
     # Display summary
     echo ""
-    echo ""
     print_section "Execution Summary"
     echo -e "${CYAN}Total clusters processed: ${NC}${cluster_count}"
     echo -e "${GREEN}Successful: ${NC}${success_count}"
@@ -345,11 +343,9 @@ EOSUMMARY
     # Display all cluster summaries
     if [ ${#cluster_summaries[@]} -gt 0 ]; then
         echo ""
-        echo ""
         print_section "Cluster Health Summaries"
         for summary in "${cluster_summaries[@]}"; do
             echo -e "${CYAN}${summary}${NC}"
-            echo ""
         done
     fi
 
@@ -362,7 +358,6 @@ EOSUMMARY
 
     # Update "latest" directory to point to this run's results
     local latest_dir="${SCRIPT_DIR}/health-check-results/latest"
-    progress "Updating 'latest' directory..."
 
     # Remove existing latest directory/symlink if exists
     if [[ -L "${latest_dir}" ]]; then

@@ -1,5 +1,52 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.2.1 (2026-01-29)
+
+### Bug Fixes
+
+#### 1. Fixed Integer Expression Error
+- **Issue**: `line 286: [: 0\n0: integer expression expected`
+- **Cause**: `grep -c` returns exit code 1 when count is 0, causing `|| echo '0'` to append another "0"
+- **Fix**: Changed to `|| true` and clean up newlines separately
+- **Files**: `k8s-health-check-pre.sh`, `k8s-health-check-post.sh`
+
+#### 2. Fixed "0\n0" Display in Health Indicators
+- **Issue**: Health Indicators showed extra "0" on new line for CrashLoop and Pending pods
+- **Cause**: Same as above - double "0" output from grep fallback
+- **Fix**: Properly sanitize variable output with `tr -d ' \n\r'`
+
+#### 3. Fixed TMC Context Timestamp Bug
+- **Issue**: POST script recreated context even though PRE just created it
+- **Cause**: `save_context_timestamp()` wasn't properly removing old entries when the only entry was for the same context
+- **Fix**: Updated `save_context_timestamp()` to handle edge case where grep -v returns empty
+- **File**: `lib/tmc-context.sh`
+
+#### 4. Removed Unnecessary Console Output
+- Removed: `Script Directory: /path/to/script`
+- Removed: `[INFO] Output directory: /path/to/output`
+- Removed: `[INFO] Updating 'latest' directory...`
+- Keeps output cleaner and more focused on important information
+
+#### 5. Reduced Multi-line Spacing
+- Removed excessive blank lines between sections in console output
+- Removed extra blank line after each cluster summary
+- Cleaner, more compact output
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `k8s-health-check-pre.sh` | Fixed pods_crashloop/pending vars, removed verbose output, reduced spacing |
+| `k8s-health-check-post.sh` | Fixed pods_crashloop/pending vars, removed verbose output, reduced spacing |
+| `lib/tmc-context.sh` | Fixed save_context_timestamp() to properly remove old entries |
+
+### Notes
+
+**Q: Kubeconfig cache duration?**
+A: Kubeconfig files are cached for **24 hours** (`KUBECONFIG_CACHE_EXPIRY=86400` in `lib/tmc.sh`)
+
+---
+
 ## Version 3.2 (2026-01-28)
 
 ### New Features
