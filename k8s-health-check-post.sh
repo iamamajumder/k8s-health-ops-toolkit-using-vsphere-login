@@ -8,7 +8,8 @@
 #          Auto-creates TMC contexts based on cluster naming patterns
 #===============================================================================
 
-set -o pipefail
+set +e          # Disable exit-on-error (may be inherited from user's .bashrc)
+set -o pipefail # Fail on pipe errors
 
 # Preserve PATH from parent shell
 export PATH="${PATH}"
@@ -238,6 +239,8 @@ run_health_checks() {
 
         local report_file="${cluster_output_dir}/health-check-report.txt"
 
+        # Run health check with error handling
+        local hc_exit_code=0
         {
             print_header "KUBERNETES CLUSTER HEALTH CHECK - POST-CHANGE"
             echo "Cluster: ${cluster_name}"
@@ -264,7 +267,11 @@ run_health_checks() {
             run_section_17_certificates
             run_section_18_cluster_summary
 
-        } > "${report_file}" 2>&1
+        } > "${report_file}" 2>&1 || hc_exit_code=$?
+
+        if [ "${hc_exit_code}" -ne 0 ]; then
+            warning "Health check completed with exit code ${hc_exit_code} (some commands may have failed)"
+        fi
 
         # Capture Section 18 summary with health indicators for console display
         local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
