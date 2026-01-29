@@ -1,6 +1,16 @@
 # Kubernetes Cluster Health Check Tool
 
-**Version 3.2** - Automated Health Check with TMC Auto-Discovery and PRE/POST Comparison
+**Version 3.3** - Unified Script with TMC Auto-Discovery and PRE/POST Comparison
+
+---
+
+## What's New in v3.3
+
+- **Unified Script**: Merged PRE and POST scripts into single `k8s-health-check.sh` with `--mode` flag
+- **Centralized Health Logic**: New `lib/health.sh` module for all health calculations
+- **Test Suite**: Added `tests/test-grep-patterns.sh` for pattern validation
+- **Reduced Code Duplication**: ~500 fewer lines of code to maintain
+- **Legacy Scripts**: Old scripts moved to `Archive/v3.2/` for backwards compatibility
 
 ---
 
@@ -67,66 +77,80 @@ dev-system-01
 
 ## Execution
 
-### Quick Start
+### Quick Start (v3.3 Unified Script)
 
 ```bash
-# Make scripts executable
-chmod +x k8s-health-check-pre.sh k8s-health-check-post.sh
+# Make script executable
+chmod +x k8s-health-check.sh
 
 # Run PRE-change health check (before maintenance)
-./k8s-health-check-pre.sh              # Creates latest/ directory automatically
+./k8s-health-check.sh --mode pre
 
 # Perform your maintenance/upgrade...
 
 # Run POST-change health check (after maintenance)
-./k8s-health-check-post.sh             # Automatically uses latest PRE results
+./k8s-health-check.sh --mode post
 ```
 
 ### PRE-Change Health Check
 
 ```bash
 # Using default ./clusters.conf
-./k8s-health-check-pre.sh
+./k8s-health-check.sh --mode pre
 
 # Using specific config file
-./k8s-health-check-pre.sh ./my-clusters.conf
+./k8s-health-check.sh --mode pre ./my-clusters.conf
 
 # With debug output
-DEBUG=on ./k8s-health-check-pre.sh
+DEBUG=on ./k8s-health-check.sh --mode pre
 
 # With credentials in environment (no prompts)
 TMC_SELF_MANAGED_USERNAME=myuser \
 TMC_SELF_MANAGED_PASSWORD=mypass \
-./k8s-health-check-pre.sh
+./k8s-health-check.sh --mode pre
 ```
 
 ### POST-Change Health Check
 
 ```bash
 # Simplest: Use latest PRE results (recommended for recent PRE runs)
-./k8s-health-check-post.sh
+./k8s-health-check.sh --mode post
 
-# Using specific PRE results directory (for older comparisons)
-./k8s-health-check-post.sh ./health-check-results/pre-20260128_120000
+# Using specific PRE results directory
+./k8s-health-check.sh --mode post ./health-check-results/pre-20260128_120000
 
-# Using specific config file
-./k8s-health-check-post.sh ./clusters.conf ./health-check-results/pre-20260128_120000
-
-# Reverse argument order (auto-detected)
-./k8s-health-check-post.sh ./health-check-results/pre-20260128_120000 ./clusters.conf
+# Using specific config file and PRE results
+./k8s-health-check.sh --mode post ./clusters.conf ./health-check-results/pre-20260128_120000
 
 # With debug output
-DEBUG=on ./k8s-health-check-post.sh
+DEBUG=on ./k8s-health-check.sh --mode post
 ```
 
 ### Cache Management
 
 ```bash
-# View cache status (metadata, kubeconfigs, context timestamps)
-./k8s-health-check-pre.sh --cache-status
+# View cache status
+./k8s-health-check.sh --cache-status
 
 # Clear all cached data
-./k8s-health-check-pre.sh --clear-cache
+./k8s-health-check.sh --clear-cache
+```
+
+### Running Tests
+
+```bash
+# Run grep pattern validation tests
+./tests/test-grep-patterns.sh
+```
+
+### Legacy Scripts (v3.2 Compatibility)
+
+The old separate PRE/POST scripts are still available for backwards compatibility:
+
+```bash
+# Located in Archive/v3.2/
+./Archive/v3.2/k8s-health-check-pre.sh
+./Archive/v3.2/k8s-health-check-post.sh
 ```
 
 ### Environment Variables
@@ -146,9 +170,9 @@ DEBUG=on ./k8s-health-check-post.sh
 
 ## Explanation
 
-### What the Scripts Do
+### What the Script Does
 
-#### PRE-Change Health Check (`k8s-health-check-pre.sh`)
+#### PRE-Change Mode (`--mode pre`)
 
 1. **Reads cluster configuration** from `clusters.conf`
 2. **Auto-detects environment** (prod/nonprod) from cluster naming pattern
@@ -160,7 +184,7 @@ DEBUG=on ./k8s-health-check-post.sh
 8. **Saves results** to `health-check-results/pre-YYYYMMDD_HHMMSS/`
 9. **Updates "latest" directory** to point to most recent PRE results
 
-#### POST-Change Health Check (`k8s-health-check-post.sh`)
+#### POST-Change Mode (`--mode post`)
 
 All steps from PRE-check, plus:
 
@@ -278,30 +302,37 @@ health-check-results/
 
 ```
 k8-health-check/
-├── k8s-health-check-pre.sh      # PRE-change health check script
-├── k8s-health-check-post.sh     # POST-change health check script
-├── clusters.conf                 # Cluster configuration file
-├── README.md                     # This documentation
-├── RELEASE.md                    # Release notes and changelog
-├── TO-DO.md                      # Future enhancements
+├── k8s-health-check.sh           # Unified health check script (v3.3)
+├── clusters.conf                  # Cluster configuration file
+├── README.md                      # This documentation
+├── RELEASE.md                     # Release notes and changelog
+├── TO-DO.md                       # Future enhancements
 │
-├── lib/                          # Library modules
-│   ├── common.sh                 # Shared utilities & logging
-│   ├── config.sh                 # Configuration parser
-│   ├── tmc-context.sh            # TMC context auto-creation
-│   ├── tmc.sh                    # TMC integration & auto-discovery
-│   ├── scp.sh                    # Optional Windows SCP transfer
-│   ├── comparison.sh             # PRE/POST comparison logic
+├── lib/                           # Library modules
+│   ├── common.sh                  # Shared utilities & logging
+│   ├── config.sh                  # Configuration parser
+│   ├── health.sh                  # Health calculations (NEW in v3.3)
+│   ├── tmc-context.sh             # TMC context auto-creation
+│   ├── tmc.sh                     # TMC integration & auto-discovery
+│   ├── scp.sh                     # Optional Windows SCP transfer
+│   ├── comparison.sh              # PRE/POST comparison logic
 │   │
-│   └── sections/                 # Health check modules (18 sections)
+│   └── sections/                  # Health check modules (18 sections)
 │       ├── 01-cluster-overview.sh
 │       ├── 02-node-status.sh
 │       ├── ...
 │       └── 18-cluster-summary.sh
 │
-├── health-check-results/         # Output directory (auto-created)
+├── tests/                         # Test scripts (NEW in v3.3)
+│   └── test-grep-patterns.sh      # Pattern validation tests
 │
-└── Archive/                      # Archived versions and documentation
+├── health-check-results/          # Output directory (auto-created)
+│
+└── Archive/                       # Archived versions
+    ├── v3.2/                      # Legacy PRE/POST scripts
+    │   ├── k8s-health-check-pre.sh
+    │   └── k8s-health-check-post.sh
+    └── ...
 ```
 
 ---
@@ -316,12 +347,40 @@ k8-health-check/
 | "Cluster not found in TMC" | Cluster not registered or wrong name | Verify with `tanzu tmc cluster list` |
 | "Failed to create TMC context" | Wrong endpoint or credentials | Check `lib/tmc-context.sh` settings |
 | "Context expired" | TMC context older than 12 hours | Script auto-recreates, just re-run |
+| "Mode not specified" | Missing `--mode` flag | Use `--mode pre` or `--mode post` |
 
 ### Debug Mode
 
 ```bash
-DEBUG=on ./k8s-health-check-pre.sh ./clusters.conf 2>&1 | tee debug.log
+DEBUG=on ./k8s-health-check.sh --mode pre 2>&1 | tee debug.log
 ```
+
+### Running Tests
+
+```bash
+# Validate grep patterns work correctly
+./tests/test-grep-patterns.sh
+
+# Expected output: "All tests passed!"
+```
+
+---
+
+## Migration from v3.2
+
+If upgrading from v3.2 (separate PRE/POST scripts):
+
+```bash
+# Old way (v3.2):
+./k8s-health-check-pre.sh
+./k8s-health-check-post.sh
+
+# New way (v3.3):
+./k8s-health-check.sh --mode pre
+./k8s-health-check.sh --mode post
+```
+
+The old scripts remain available in `Archive/v3.2/` for backwards compatibility.
 
 ---
 
@@ -331,8 +390,10 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| 3.2 | 2026-01-28 | Enhanced health summary, PRE vs POST comparison, optional clusters.conf |
-| 3.1.1 | 2026-01-27 | 12-hour context validity, removed prompts, cluster summaries |
+| 3.3 | 2026-01-29 | Unified script with --mode flag, lib/health.sh module, test suite |
+| 3.2.6 | 2026-01-29 | Fixed grep -c pattern bug causing "0\n0" arithmetic errors |
+| 3.2 | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |
+| 3.1.1 | 2026-01-27 | 12-hour context validity, removed prompts |
 | 3.1 | 2025-01-22 | Auto-discovery, auto-context, unified execution |
 | 3.0 | Initial | Basic health check functionality |
 
@@ -342,6 +403,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 1. Review this README and [RELEASE.md](RELEASE.md)
 2. Enable DEBUG mode for verbose output
-3. Check error messages in script output
-4. Verify prerequisites are met
-5. Test with single cluster first
+3. Run `./tests/test-grep-patterns.sh` to validate patterns
+4. Check error messages in script output
+5. Verify prerequisites are met
+6. Test with single cluster first

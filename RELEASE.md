@@ -1,5 +1,105 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.3 (2026-01-29)
+
+### Major Refactoring
+
+#### Unified Script Architecture
+- **Merged PRE and POST scripts** into single `k8s-health-check.sh` with `--mode pre|post` flag
+- **Reduced code duplication** by ~500 lines (from ~3400 to ~2900 lines)
+- **Improved maintainability** with single codebase for both modes
+- Old scripts archived to `Archive/v3.2/` for backwards compatibility
+
+#### New Health Module (`lib/health.sh`)
+- **Centralized health calculations** - all metrics collected in one place
+- **Exported functions** for reuse:
+  - `collect_health_metrics()` - Gather all cluster health data
+  - `calculate_health_status()` - Determine HEALTHY/WARNINGS/CRITICAL
+  - `generate_health_summary()` - Create formatted summary string
+  - `run_health_check()` - All-in-one convenience function
+- **Eliminates duplicate code** between PRE/POST scripts and Section 18
+
+#### Test Suite (`tests/test-grep-patterns.sh`)
+- **Pattern validation tests** to prevent regression of grep -c bugs
+- **Tests all critical patterns**:
+  - grep -c with matches (normal case)
+  - grep -c with NO matches (previously caused "0\n0" bug)
+  - grep -ic (case insensitive)
+  - wc -l patterns
+  - awk patterns for deployments
+  - Arithmetic operations
+- **Run with**: `./tests/test-grep-patterns.sh`
+
+### Usage Changes
+
+```bash
+# Old way (v3.2):
+./k8s-health-check-pre.sh
+./k8s-health-check-post.sh
+
+# New way (v3.3):
+./k8s-health-check.sh --mode pre
+./k8s-health-check.sh --mode post
+```
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `k8s-health-check.sh` | Unified health check script |
+| `lib/health.sh` | Centralized health calculation module |
+| `tests/test-grep-patterns.sh` | Pattern validation tests |
+
+### Archived Files
+
+| File | Location |
+|------|----------|
+| `k8s-health-check-pre.sh` | `Archive/v3.2/k8s-health-check-pre.sh` |
+| `k8s-health-check-post.sh` | `Archive/v3.2/k8s-health-check-post.sh` |
+
+### Benefits
+
+1. **Single source of truth** - One script to maintain instead of two
+2. **Consistent behavior** - PRE and POST use identical health logic
+3. **Easier testing** - Test suite catches pattern regressions
+4. **Better organization** - Health logic separated into dedicated module
+5. **Backwards compatible** - Old scripts available in Archive for migration
+
+---
+
+## Version 3.2.6 (2026-01-29)
+
+### Bug Fix
+
+#### Fixed "0\n0" Syntax Error in Arithmetic Expressions
+
+**Issue**: Script failed with `syntax error in expression (error token is "0")` in Section 18
+
+**Root Cause**: The pattern `grep -ic ... | tr -d ' ' || echo '0'` produced "0\n0" because:
+1. `grep -ic` outputs "0" with exit code 1 when no matches found
+2. With `set -o pipefail`, the pipeline fails
+3. `|| echo '0'` triggers, appending another "0" to the output
+4. Result: "0\n0" fails when used in arithmetic expressions like `$((pods_total - ...))`
+
+**Fix**: Changed the pattern from:
+```bash
+# BROKEN (produces "0\n0"):
+local count=$(grep -ic Pattern file | tr -d ' ' || echo '0')
+
+# FIXED (produces "0"):
+local count=$(grep -ic Pattern file || true)
+count=$(echo "${count}" | tr -d ' \n\r')
+count=${count:-0}
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lib/sections/18-cluster-summary.sh` | Fixed all grep -c/grep -ic patterns |
+
+---
+
 ## Version 3.2.3 (2026-01-29)
 
 ### Bug Fix
