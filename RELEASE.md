@@ -1,5 +1,55 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.2.2 (2026-01-29)
+
+### New Feature
+
+#### Added "Pods Unaccounted" Health Metric
+- **Purpose**: Track pods that are not in any expected state (Running, Completed, CrashLoop, or Pending)
+- **Formula**: `pods_unaccounted = pods_total - pods_running - pods_completed - pods_crashloop - pods_pending`
+- **Benefit**: Catches pods in unexpected states like Failed, Unknown, ImagePullBackOff, Error, etc.
+
+### Health Status Logic Enhancement
+
+**Scenario**: When `Pods: 107/108 Running` and the 1 non-running pod is in Completed state
+- **Before**: Could appear concerning (107 != 108)
+- **After**: Now HEALTHY because all pods are accounted for (Running + Completed = Total)
+
+**New Warning Condition**:
+- `Pods Unaccounted > 0` triggers a WARNING (pods in unexpected states need investigation)
+
+### Health Indicators Display
+
+```
+Health Indicators:
+  Nodes NotReady: 0
+  Pods CrashLoop: 0
+  Pods Pending: 0
+  Pods Completed: 1
+  Pods Unaccounted: 0    ← NEW
+```
+
+### Example Scenarios
+
+| Total | Running | Completed | CrashLoop | Pending | Unaccounted | Status |
+|-------|---------|-----------|-----------|---------|-------------|--------|
+| 100 | 100 | 0 | 0 | 0 | 0 | HEALTHY |
+| 108 | 107 | 1 | 0 | 0 | 0 | HEALTHY |
+| 100 | 99 | 0 | 1 | 0 | 0 | CRITICAL |
+| 100 | 99 | 0 | 0 | 1 | 0 | WARNINGS |
+| 100 | 99 | 0 | 0 | 0 | 1 | WARNINGS |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `k8s-health-check-pre.sh` | Added pods_unaccounted calculation and warning check |
+| `k8s-health-check-post.sh` | Added pods_unaccounted calculation and warning check |
+| `lib/sections/18-cluster-summary.sh` | Added Pods Completed and Pods Unaccounted to Section 18 |
+| `lib/comparison.sh` | Added Pods Completed and Pods Unaccounted to comparison metrics |
+
+---
+
 ## Version 3.2.1 (2026-01-29)
 
 ### Bug Fixes

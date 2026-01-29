@@ -42,6 +42,7 @@ run_section_18_cluster_summary() {
     local nodes_notready=$((nodes_total - nodes_ready))
     local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff | tr -d ' ' || echo '0')
     local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending | tr -d ' ' || echo '0')
+    local pods_completed=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Completed | tr -d ' ' || echo '0')
 
     # Deployments not ready (READY column shows X/Y where X != Y)
     local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
@@ -62,11 +63,16 @@ run_section_18_cluster_summary() {
     nodes_notready=${nodes_notready:-0}
     pods_crashloop=${pods_crashloop:-0}
     pods_pending=${pods_pending:-0}
+    pods_completed=${pods_completed:-0}
     deploys_notready=${deploys_notready:-0}
     ds_notready=${ds_notready:-0}
     sts_notready=${sts_notready:-0}
     pvc_notbound=${pvc_notbound:-0}
     helm_failed=${helm_failed:-0}
+
+    # Calculate unaccounted pods (not Running, Completed, CrashLoop, or Pending)
+    local pods_unaccounted=$((pods_total - pods_running - pods_completed - pods_crashloop - pods_pending))
+    [ "${pods_unaccounted}" -lt 0 ] && pods_unaccounted=0
 
     # Display health indicators with status
     if [ "$nodes_notready" -gt 0 ]; then
@@ -117,6 +123,14 @@ run_section_18_cluster_summary() {
         echo "Helm Failed: ${helm_failed}      [OK]"
     fi
 
+    echo "Pods Completed: ${pods_completed}      [INFO]"
+
+    if [ "$pods_unaccounted" -gt 0 ]; then
+        echo "Pods Unaccounted: ${pods_unaccounted}      [WARNING]"
+    else
+        echo "Pods Unaccounted: ${pods_unaccounted}      [OK]"
+    fi
+
     echo ""
 
     # Determine overall health status
@@ -149,6 +163,9 @@ run_section_18_cluster_summary() {
         warning_count=$((warning_count + 1))
     fi
     if [ "$helm_failed" -gt 0 ]; then
+        warning_count=$((warning_count + 1))
+    fi
+    if [ "$pods_unaccounted" -gt 0 ]; then
         warning_count=$((warning_count + 1))
     fi
 

@@ -196,11 +196,13 @@ All steps from PRE-check, plus:
 
 ### Health Status Classification
 
-| Status | Condition | Action |
-|--------|-----------|--------|
-| **CRITICAL** | Nodes NotReady OR Pods CrashLoopBackOff | Investigate immediately |
-| **WARNINGS** | Pending pods, workloads not ready, PVCs not bound, Helm failed | Monitor, may resolve |
-| **HEALTHY** | All checks passed | No action needed |
+| Status | Criteria | Action |
+|--------|----------|--------|
+| **CRITICAL** | Any of: Nodes NotReady > 0, Pods CrashLoopBackOff > 0 | Investigate immediately |
+| **WARNINGS** | Any of: Pods Pending > 0, Pods Unaccounted > 0, Deployments NotReady > 0, DaemonSets NotReady > 0, StatefulSets NotReady > 0, PVCs NotBound > 0, Helm Failed > 0 | Monitor, may resolve |
+| **HEALTHY** | None of the above conditions | No action needed |
+
+**Note on "Pods Unaccounted"**: Calculated as `Pods Total - Running - Completed - CrashLoop - Pending`. Catches pods in unexpected states (Failed, Unknown, ImagePullBackOff, etc.). If a pod is Completed (e.g., finished Job), it's accounted for and won't affect health status.
 
 ### PRE vs POST Comparison Output
 

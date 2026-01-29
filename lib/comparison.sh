@@ -40,6 +40,8 @@ parse_health_report() {
     local nodes_notready=$(grep -E "^Nodes NotReady:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
     local pods_crashloop=$(grep -E "^Pods CrashLoop:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
     local pods_pending=$(grep -E "^Pods Pending:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
+    local pods_completed=$(grep -E "^Pods Completed:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
+    local pods_unaccounted=$(grep -E "^Pods Unaccounted:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
     local deploys_notready=$(grep -E "^Deploys NotReady:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
     local ds_notready=$(grep -E "^DS NotReady:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
     local sts_notready=$(grep -E "^STS NotReady:" "${report_file}" 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
@@ -54,6 +56,8 @@ parse_health_report() {
     echo "PODS_RUNNING=${pods_running:-0}"
     echo "PODS_CRASHLOOP=${pods_crashloop:-0}"
     echo "PODS_PENDING=${pods_pending:-0}"
+    echo "PODS_COMPLETED=${pods_completed:-0}"
+    echo "PODS_UNACCOUNTED=${pods_unaccounted:-0}"
     echo "DEPLOYS_TOTAL=${deploys_total:-0}"
     echo "DEPLOYS_NOTREADY=${deploys_notready:-0}"
     echo "DS_TOTAL=${ds_total:-0}"
@@ -221,6 +225,12 @@ generate_metrics_comparison() {
     delta=$(calculate_delta "${PRE_PODS_PENDING}" "${POST_PODS_PENDING}")
     printf "%-25s %10s %10s %10s %10s\n" "Pods Pending" "${PRE_PODS_PENDING:-0}" "${POST_PODS_PENDING:-0}" "$delta" "$(get_delta_status 'pods_pending' "$delta" 'higher_is_worse')"
 
+    delta=$(calculate_delta "${PRE_PODS_COMPLETED}" "${POST_PODS_COMPLETED}")
+    printf "%-25s %10s %10s %10s %10s\n" "Pods Completed" "${PRE_PODS_COMPLETED:-0}" "${POST_PODS_COMPLETED:-0}" "$delta" "$(get_delta_status 'pods_completed' "$delta" 'neutral')"
+
+    delta=$(calculate_delta "${PRE_PODS_UNACCOUNTED}" "${POST_PODS_UNACCOUNTED}")
+    printf "%-25s %10s %10s %10s %10s\n" "Pods Unaccounted" "${PRE_PODS_UNACCOUNTED:-0}" "${POST_PODS_UNACCOUNTED:-0}" "$delta" "$(get_delta_status 'pods_unaccounted' "$delta" 'higher_is_worse')"
+
     echo ""
 
     # Deployments
@@ -312,6 +322,16 @@ generate_layman_summary() {
         has_changes=true
     elif [ "$pending_delta" -lt 0 ]; then
         improvements+=("$((-pending_delta)) pod(s) moved from Pending to Running")
+        has_changes=true
+    fi
+
+    # Check pods unaccounted
+    local unaccounted_delta=$((${POST_PODS_UNACCOUNTED:-0} - ${PRE_PODS_UNACCOUNTED:-0}))
+    if [ "$unaccounted_delta" -gt 0 ]; then
+        warnings+=("${unaccounted_delta} more pod(s) in unexpected state (Failed/Unknown/Error)")
+        has_changes=true
+    elif [ "$unaccounted_delta" -lt 0 ]; then
+        improvements+=("$((-unaccounted_delta)) pod(s) recovered from unexpected state")
         has_changes=true
     fi
 
@@ -428,6 +448,7 @@ generate_final_verdict() {
 
     # Count warnings (from POST state)
     [ "${POST_PODS_PENDING:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+    [ "${POST_PODS_UNACCOUNTED:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
     [ "${POST_DEPLOYS_NOTREADY:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
     [ "${POST_DS_NOTREADY:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
     [ "${POST_STS_NOTREADY:-0}" -gt 0 ] && warning_count=$((warning_count + 1))

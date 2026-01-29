@@ -265,6 +265,9 @@ run_health_checks() {
         local pods_completed=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Completed || true)
         pods_completed=$(echo "${pods_completed}" | tr -d ' \n\r')
         pods_completed=${pods_completed:-0}
+        # Calculate unaccounted pods (not Running, Completed, CrashLoop, or Pending)
+        local pods_unaccounted=$((pods_total - pods_running - pods_completed - pods_crashloop - pods_pending))
+        [ "${pods_unaccounted}" -lt 0 ] && pods_unaccounted=0
         local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
         local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
         local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -288,6 +291,7 @@ run_health_checks() {
         [ "${sts_notready:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
         [ "${pvc_notbound:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
         [ "${helm_failed:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
+        [ "${pods_unaccounted:-0}" -gt 0 ] && warning_count=$((warning_count + 1))
         [ "$critical_count" -gt 0 ] && health_status="CRITICAL"
         [ "$critical_count" -eq 0 ] && [ "$warning_count" -gt 0 ] && health_status="WARNINGS"
 
@@ -306,6 +310,7 @@ CLUSTER: ${cluster_name}
     Pods CrashLoop: ${pods_crashloop:-0}
     Pods Pending: ${pods_pending:-0}
     Pods Completed: ${pods_completed:-0}
+    Pods Unaccounted: ${pods_unaccounted:-0}
   ---
   HEALTH STATUS: ${health_status}
 EOSUMMARY
