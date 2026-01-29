@@ -49,6 +49,7 @@ All scripts now run in **parallel batches of 6 clusters by default** for faster 
 Health-gated cluster upgrades with monitoring and comparison.
 
 **Features:**
+- **Single cluster mode** with `-c <clustername>` option (no config file needed)
 - **PRE-upgrade health validation** with intelligent decision gates:
   - `HEALTHY` → Auto-proceed with upgrade
   - `WARNINGS` → Prompt user for confirmation (use `--force` to skip)
@@ -61,6 +62,8 @@ Health-gated cluster upgrades with monitoring and comparison.
 **Usage:**
 ```bash
 ./k8s-cluster-upgrade.sh                    # Uses ./clusters.conf
+./k8s-cluster-upgrade.sh -c my-cluster      # Upgrade a single cluster by name
+./k8s-cluster-upgrade.sh -c my-cluster --dry-run  # Dry run for single cluster
 ./k8s-cluster-upgrade.sh --dry-run          # Preview without executing
 ./k8s-cluster-upgrade.sh --force            # Skip prompts for WARNINGS
 ./k8s-cluster-upgrade.sh --timeout 45       # Custom timeout (default: 30 min)

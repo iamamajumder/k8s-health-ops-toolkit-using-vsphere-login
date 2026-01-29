@@ -236,6 +236,12 @@ chmod +x k8s-cluster-upgrade.sh
 # Basic usage (uses ./clusters.conf)
 ./k8s-cluster-upgrade.sh
 
+# Upgrade a single cluster by name (no config file needed)
+./k8s-cluster-upgrade.sh -c my-cluster-name
+
+# Dry run for a single cluster
+./k8s-cluster-upgrade.sh -c my-cluster-name --dry-run
+
 # With specific config file
 ./k8s-cluster-upgrade.sh ./upgrade-clusters.conf
 

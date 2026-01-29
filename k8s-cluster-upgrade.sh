@@ -38,6 +38,7 @@ FORCE_UPGRADE=false
 UPGRADE_TIMEOUT=${DEFAULT_TIMEOUT}
 PARALLEL_MODE="true"        # Parallel execution enabled by default
 BATCH_SIZE=6                # Default batch size for parallel execution
+SINGLE_CLUSTER=""           # Single cluster name (overrides config file)
 
 #===============================================================================
 # Prerequisite Checks
@@ -82,6 +83,7 @@ Arguments:
 
 Options:
   -h, --help              Show this help message
+  -c, --cluster <name>    Upgrade a single cluster (overrides clusters.conf)
   --dry-run               Show what would be upgraded without actually upgrading
   --skip-health-check     Skip PRE-upgrade health check (not recommended)
   --force                 Skip confirmation prompts for WARNINGS status
@@ -103,11 +105,17 @@ Examples:
   # Upgrade clusters (parallel by default, 6 at a time)
   $0
 
+  # Upgrade a single cluster by name
+  $0 -c my-cluster-name
+
   # Upgrade clusters from specific config
   $0 ./upgrade-clusters.conf
 
   # Dry run (show what would happen)
   $0 --dry-run
+
+  # Dry run for a single cluster
+  $0 -c my-cluster-name --dry-run
 
   # Force upgrade even with warnings (skips prompts)
   $0 --force
@@ -770,22 +778,45 @@ run_cluster_upgrades() {
     local config_file="$1"
     local parallel="$2"
     local batch_size="$3"
+    local single_cluster="$4"
 
-    # Validate configuration
-    if ! load_configuration "${config_file}"; then
-        exit 1
-    fi
+    local cluster_list=""
+    local cluster_count=0
 
     # Display banner
     print_section "Kubernetes Cluster Upgrade"
 
-    display_info "Configuration File" "${config_file}"
-    display_info "Upgrade Timeout" "${UPGRADE_TIMEOUT} minutes"
-    if [[ "${parallel}" == "true" ]]; then
-        display_info "Execution Mode" "Parallel (batch size: ${batch_size})"
+    # Handle single cluster mode
+    if [[ -n "${single_cluster}" ]]; then
+        cluster_list="${single_cluster}"
+        cluster_count=1
+        parallel="false"  # No need for parallel with single cluster
+
+        display_info "Cluster" "${single_cluster}"
+        display_info "Mode" "Single Cluster"
     else
-        display_info "Execution Mode" "Sequential"
+        # Validate configuration
+        if ! load_configuration "${config_file}"; then
+            exit 1
+        fi
+
+        # Get cluster list from config
+        cluster_list=$(get_cluster_list "${config_file}")
+        if [ -z "${cluster_list}" ]; then
+            error "No clusters found in configuration file"
+            exit 1
+        fi
+        cluster_count=$(count_clusters "${config_file}")
+
+        display_info "Configuration File" "${config_file}"
+        if [[ "${parallel}" == "true" ]]; then
+            display_info "Execution Mode" "Parallel (batch size: ${batch_size})"
+        else
+            display_info "Execution Mode" "Sequential"
+        fi
     fi
+
+    display_info "Upgrade Timeout" "${UPGRADE_TIMEOUT} minutes"
     display_info "Dry Run" "${DRY_RUN}"
     display_info "Force Mode" "${FORCE_UPGRADE}"
     display_info "Started" "$(get_formatted_timestamp)"
@@ -796,17 +827,13 @@ run_cluster_upgrades() {
     local output_base_dir="${SCRIPT_DIR}/upgrade-results/upgrade-${timestamp}"
     mkdir -p "${output_base_dir}"
 
-    # Get cluster list
-    local cluster_list=$(get_cluster_list "${config_file}")
-    if [ -z "${cluster_list}" ]; then
-        error "No clusters found in configuration file"
-        exit 1
+    # Display cluster list (only for multi-cluster mode)
+    if [[ -z "${single_cluster}" ]]; then
+        display_cluster_list "${config_file}" || exit 1
+    else
+        echo -e "${CYAN}Target Cluster:${NC} ${single_cluster}"
+        echo ""
     fi
-
-    local cluster_count=$(count_clusters "${config_file}")
-
-    # Display cluster list
-    display_cluster_list "${config_file}" || exit 1
 
     # Initialize counters
     local success_count=0
@@ -834,7 +861,7 @@ run_cluster_upgrades() {
         failed_clusters=("${PARALLEL_FAILED_CLUSTERS[@]}")
         skipped_clusters=("${PARALLEL_SKIPPED_CLUSTERS[@]}")
     else
-        # Sequential execution (original behavior)
+        # Sequential execution (original behavior or single cluster mode)
         while IFS= read -r cluster_name; do
             current=$((current + 1))
 
@@ -859,7 +886,7 @@ run_cluster_upgrades() {
                     ;;
             esac
 
-        done < <(get_cluster_list "${config_file}")
+        done < <(echo "${cluster_list}")
     fi
 
     # Display summary
@@ -910,6 +937,16 @@ parse_arguments() {
         case "$1" in
             -h|--help)
                 show_usage
+                ;;
+            -c|--cluster)
+                shift
+                if [[ -n "$1" ]] && [[ ! "$1" =~ ^- ]]; then
+                    SINGLE_CLUSTER="$1"
+                else
+                    error "Cluster name required for -c/--cluster option"
+                    exit 1
+                fi
+                shift
                 ;;
             --dry-run)
                 DRY_RUN=true
@@ -963,6 +1000,12 @@ parse_arguments() {
         esac
     done
 
+    # If single cluster is specified, skip config file validation
+    if [[ -n "${SINGLE_CLUSTER}" ]]; then
+        CONFIG_FILE=""
+        return
+    fi
+
     # Validate config file
     if [[ ! -f "${config_file}" ]]; then
         error "Configuration file not found: ${config_file}"
@@ -979,7 +1022,7 @@ parse_arguments() {
 main() {
     check_prerequisites
     parse_arguments "$@"
-    run_cluster_upgrades "${CONFIG_FILE}" "${PARALLEL_MODE}" "${BATCH_SIZE}"
+    run_cluster_upgrades "${CONFIG_FILE}" "${PARALLEL_MODE}" "${BATCH_SIZE}" "${SINGLE_CLUSTER}"
 }
 
 main "$@"
