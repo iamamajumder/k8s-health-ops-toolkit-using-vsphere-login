@@ -2,6 +2,29 @@
 
 ## Version 3.4 (2026-01-29)
 
+### Parallel Execution for Health Checks
+
+Added `--parallel` flag to `k8s-health-check.sh` for faster processing of multiple clusters.
+
+**Usage:**
+```bash
+# PRE-check with parallel execution
+./k8s-health-check.sh --mode pre --parallel
+
+# POST-check with parallel execution
+./k8s-health-check.sh --mode post --parallel
+```
+
+**How it works:**
+1. TMC contexts are prepared sequentially first (to avoid race conditions with tanzu CLI)
+2. Health checks are launched in parallel for all clusters (background processes)
+3. Results are collected via temp files and displayed once all checks complete
+
+**Benefits:**
+- Significant time savings for multiple clusters (e.g., 5 clusters in parallel vs sequential)
+- Same output format and reports as sequential execution
+- Ideal for CI/CD pipelines and non-interactive environments
+
 ### New Scripts
 
 #### 1. Automated Cluster Upgrade (`k8s-cluster-upgrade.sh`)

@@ -1,11 +1,12 @@
 #!/bin/bash
 #===============================================================================
-# Kubernetes Cluster Health Check - Unified Script v3.3
+# Kubernetes Cluster Health Check - Unified Script v3.4
 # Environment: VMware Cloud Foundation 5.2.1 (vSphere 8.x, NSX 4.x)
 #              VKS 3.3.3, VKR 1.28.x/1.29.x
 # Purpose: Capture cluster state before/after upgrades/changes
 #          Auto-discovers cluster metadata from TMC
 #          Auto-creates TMC contexts based on cluster naming patterns
+#          Supports parallel execution for multiple clusters
 #===============================================================================
 
 set +e          # Disable exit-on-error (may be inherited from user's .bashrc)
@@ -37,6 +38,7 @@ done
 # Default mode
 CHECK_MODE=""
 PRE_RESULTS_DIR=""
+PARALLEL_MODE="false"
 
 #===============================================================================
 # Prerequisite Checks
@@ -73,11 +75,11 @@ check_prerequisites() {
 
 show_usage() {
     cat << EOF
-Kubernetes Cluster Health Check (Unified Script v3.3)
+Kubernetes Cluster Health Check (Unified Script v3.4)
 
 Usage:
-  PRE-change:   $0 --mode pre [clusters.conf]
-  POST-change:  $0 --mode post [clusters.conf] [pre-results-dir]
+  PRE-change:   $0 --mode pre [--parallel] [clusters.conf]
+  POST-change:  $0 --mode post [--parallel] [clusters.conf] [pre-results-dir]
 
 Modes:
   --mode pre    Run PRE-change health check (capture baseline before changes)
@@ -100,6 +102,7 @@ Features:
   - Caches cluster metadata for performance
   - Enhanced health summary with HEALTHY/WARNINGS/CRITICAL status
   - PRE vs POST comparison with deltas (POST mode)
+  - Parallel execution for faster processing of multiple clusters
 
 Cluster Naming Pattern:
   *-prod-[1-4]         → Production TMC context
@@ -114,6 +117,7 @@ Environment Variables:
 Options:
   -h, --help           Show this help message
   --mode pre|post      Specify check mode (required)
+  --parallel           Run health checks in parallel (faster for multiple clusters)
   --cache-status       Show cache status
   --clear-cache        Clear all cached data
 
@@ -125,6 +129,10 @@ Examples:
   # POST-change health check (run after making changes)
   $0 --mode post
   $0 --mode post ./clusters.conf ./health-check-results/pre-20250122_143000
+
+  # Parallel execution (faster for multiple clusters)
+  $0 --mode pre --parallel
+  $0 --mode post --parallel
 
   # With debug output
   DEBUG=on $0 --mode pre
@@ -267,6 +275,194 @@ process_cluster() {
 }
 
 #===============================================================================
+# Process Single Cluster (For Parallel Execution)
+#===============================================================================
+
+process_cluster_parallel() {
+    local cluster_name="$1"
+    local output_base_dir="$2"
+    local mode="$3"
+    local pre_results_dir="$4"
+    local results_file="$5"
+
+    local status="SUCCESS"
+    local summary=""
+    local exit_code=0
+
+    # Create cluster output directory
+    local cluster_output_dir="${output_base_dir}/${cluster_name}"
+    mkdir -p "${cluster_output_dir}"
+
+    # Fetch kubeconfig with auto-discovery (TMC context already prepared)
+    local kubeconfig_file="${cluster_output_dir}/kubeconfig"
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
+        status="FAILED"
+        summary="Failed to fetch kubeconfig"
+        echo "CLUSTER:${cluster_name}|STATUS:${status}|SUMMARY:${summary}" >> "${results_file}"
+        return 1
+    fi
+
+    # Set kubeconfig for health checks
+    export KUBECONFIG="${kubeconfig_file}"
+
+    # Test connectivity
+    if ! test_kubeconfig_connectivity "${kubeconfig_file}" >/dev/null 2>&1; then
+        status="FAILED"
+        summary="Cannot connect to cluster"
+        echo "CLUSTER:${cluster_name}|STATUS:${status}|SUMMARY:${summary}" >> "${results_file}"
+        return 1
+    fi
+
+    # Run health check
+    local report_file="${cluster_output_dir}/health-check-report.txt"
+
+    # Run health check with error handling
+    local hc_exit_code=0
+    {
+        run_all_health_sections "${mode^^}" "${cluster_name}"
+    } > "${report_file}" 2>&1 || hc_exit_code=$?
+
+    # Collect health metrics using centralized module
+    collect_health_metrics
+    calculate_health_status
+
+    # Generate cluster summary
+    summary=$(generate_health_summary "${cluster_name}")
+
+    # POST mode: Generate comparison report
+    if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
+        local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
+        if [[ -d "${pre_cluster_dir}" ]]; then
+            local pre_report="${pre_cluster_dir}/health-check-report.txt"
+            if [[ -f "${pre_report}" ]]; then
+                local comparison_file="${cluster_output_dir}/comparison-report.txt"
+                generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}" >/dev/null 2>&1
+            fi
+        fi
+    fi
+
+    # Write result to results file
+    echo "CLUSTER:${cluster_name}|STATUS:${status}|SUMMARY:${summary}" >> "${results_file}"
+    return 0
+}
+
+#===============================================================================
+# Prepare TMC Contexts (Sequential - to avoid race conditions)
+#===============================================================================
+
+prepare_tmc_contexts() {
+    local config_file="$1"
+
+    progress "Preparing TMC contexts for all clusters..."
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+    local current=0
+    local failed_clusters=()
+
+    while IFS= read -r cluster_name; do
+        current=$((current + 1))
+        debug "[${current}/${cluster_count}] Preparing TMC context for ${cluster_name}..."
+
+        if ! ensure_tmc_context "${cluster_name}" >/dev/null 2>&1; then
+            warning "Failed to prepare TMC context for ${cluster_name}"
+            failed_clusters+=("${cluster_name}")
+        fi
+    done < <(echo "${cluster_list}")
+
+    if [ ${#failed_clusters[@]} -gt 0 ]; then
+        warning "TMC context preparation failed for ${#failed_clusters[@]} cluster(s)"
+        for fc in "${failed_clusters[@]}"; do
+            debug "  - ${fc}"
+        done
+    fi
+
+    success "TMC contexts prepared"
+}
+
+#===============================================================================
+# Run Health Checks in Parallel
+#===============================================================================
+
+run_health_checks_parallel() {
+    local config_file="$1"
+    local mode="$2"
+    local pre_results_dir="$3"
+    local output_base_dir="$4"
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+
+    # Create temp file for collecting results
+    local results_file=$(mktemp)
+    > "${results_file}"
+
+    # Array to store PIDs
+    declare -A pids
+
+    progress "Launching health checks on ${cluster_count} clusters in parallel..."
+    echo ""
+
+    # Launch all health checks in parallel
+    local idx=0
+    while IFS= read -r cluster_name; do
+        idx=$((idx + 1))
+        echo -e "${MAGENTA}[${idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
+
+        process_cluster_parallel "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}" "${results_file}" &
+        pids["${cluster_name}"]=$!
+    done < <(echo "${cluster_list}")
+
+    echo ""
+    progress "Waiting for all health checks to complete..."
+
+    # Wait for all processes
+    declare -A exit_codes
+    for cluster_name in "${!pids[@]}"; do
+        wait ${pids[$cluster_name]} 2>/dev/null
+        exit_codes["${cluster_name}"]=$?
+    done
+
+    success "All health checks completed"
+    echo ""
+
+    # Parse results
+    local success_count=0
+    local failed_count=0
+    local failed_clusters=()
+    declare -a cluster_summaries=()
+
+    while IFS= read -r line; do
+        if [[ -z "${line}" ]]; then
+            continue
+        fi
+
+        local cluster_name=$(echo "${line}" | cut -d'|' -f1 | cut -d':' -f2)
+        local status=$(echo "${line}" | cut -d'|' -f2 | cut -d':' -f2)
+        local summary=$(echo "${line}" | cut -d'|' -f3 | cut -d':' -f2-)
+
+        if [[ "${status}" == "SUCCESS" ]]; then
+            success_count=$((success_count + 1))
+            cluster_summaries+=("${summary}")
+            echo -e "${GREEN}[SUCCESS]${NC} ${cluster_name}"
+        else
+            failed_count=$((failed_count + 1))
+            failed_clusters+=("${cluster_name}")
+            echo -e "${RED}[FAILED]${NC} ${cluster_name}: ${summary}"
+        fi
+    done < "${results_file}"
+
+    # Cleanup temp file
+    rm -f "${results_file}"
+
+    # Return values via global variables
+    PARALLEL_SUCCESS_COUNT=${success_count}
+    PARALLEL_FAILED_COUNT=${failed_count}
+    PARALLEL_FAILED_CLUSTERS=("${failed_clusters[@]}")
+    PARALLEL_CLUSTER_SUMMARIES=("${cluster_summaries[@]}")
+}
+
+#===============================================================================
 # Main Health Check Function
 #===============================================================================
 
@@ -274,6 +470,7 @@ run_health_checks() {
     local config_file="$1"
     local mode="$2"
     local pre_results_dir="$3"
+    local parallel="$4"
 
     # POST mode: Validate PRE-results directory
     if [[ "${mode}" == "post" ]]; then
@@ -294,6 +491,7 @@ run_health_checks() {
 
     display_info "Configuration File" "${config_file}"
     [[ "${mode}" == "post" ]] && display_info "PRE Results Directory" "${pre_results_dir}"
+    display_info "Execution Mode" "$([ "${parallel}" == "true" ] && echo "Parallel" || echo "Sequential")"
     display_info "Started" "$(get_formatted_timestamp)"
     echo ""
 
@@ -323,30 +521,48 @@ run_health_checks() {
     # Initialize counters
     local success_count=0
     local failed_count=0
-    local current=0
     local failed_clusters=()
-
-    # Array to store cluster summaries for console display
     declare -a cluster_summaries=()
 
-    # Process each cluster
-    while IFS= read -r cluster_name; do
-        current=$((current + 1))
-
+    if [[ "${parallel}" == "true" ]]; then
+        # Parallel execution
         echo ""
-        echo -e "${MAGENTA}[${current}/${cluster_count}]${NC} Processing: ${YELLOW}${cluster_name}${NC}"
 
-        print_section "Processing Cluster: ${cluster_name}"
+        # Prepare TMC contexts sequentially first (to avoid race conditions)
+        prepare_tmc_contexts "${config_file}"
+        echo ""
 
-        if process_cluster "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}"; then
-            cluster_summaries+=("${CLUSTER_SUMMARY}")
-            success_count=$((success_count + 1))
-        else
-            failed_clusters+=("${cluster_name}")
-            failed_count=$((failed_count + 1))
-        fi
+        # Run health checks in parallel
+        run_health_checks_parallel "${config_file}" "${mode}" "${pre_results_dir}" "${output_base_dir}"
 
-    done < <(get_cluster_list "${config_file}")
+        # Get results from global variables
+        success_count=${PARALLEL_SUCCESS_COUNT}
+        failed_count=${PARALLEL_FAILED_COUNT}
+        failed_clusters=("${PARALLEL_FAILED_CLUSTERS[@]}")
+        cluster_summaries=("${PARALLEL_CLUSTER_SUMMARIES[@]}")
+    else
+        # Sequential execution (original behavior)
+        local current=0
+
+        # Process each cluster
+        while IFS= read -r cluster_name; do
+            current=$((current + 1))
+
+            echo ""
+            echo -e "${MAGENTA}[${current}/${cluster_count}]${NC} Processing: ${YELLOW}${cluster_name}${NC}"
+
+            print_section "Processing Cluster: ${cluster_name}"
+
+            if process_cluster "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}"; then
+                cluster_summaries+=("${CLUSTER_SUMMARY}")
+                success_count=$((success_count + 1))
+            else
+                failed_clusters+=("${cluster_name}")
+                failed_count=$((failed_count + 1))
+            fi
+
+        done < <(get_cluster_list "${config_file}")
+    fi
 
     # Cleanup cache
     cleanup_cluster_cache
@@ -440,6 +656,10 @@ parse_arguments() {
                 fi
                 shift
                 ;;
+            --parallel)
+                PARALLEL_MODE="true"
+                shift
+                ;;
             *)
                 # Positional arguments
                 break
@@ -526,7 +746,7 @@ main() {
     parse_arguments "$@"
 
     # Run health checks
-    run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}"
+    run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}" "${PARALLEL_MODE}"
 }
 
 main "$@"

@@ -6,6 +6,10 @@
 
 ## What's New in v3.4
 
+- **Parallel Execution for Health Checks**: New `--parallel` flag for `k8s-health-check.sh`
+  - Run health checks on multiple clusters simultaneously
+  - Significant time savings for large cluster counts
+  - TMC contexts prepared sequentially, health checks run in parallel
 - **Automated Cluster Upgrade**: New `k8s-cluster-upgrade.sh` with health-gated upgrades
   - PRE-upgrade health validation (HEALTHY=auto, WARNINGS=prompt, CRITICAL=abort)
   - TMC-based upgrade execution with progress monitoring
@@ -88,7 +92,7 @@ dev-system-01
 
 ## Execution
 
-### Quick Start (v3.3 Unified Script)
+### Quick Start (v3.4 Unified Script)
 
 ```bash
 # Make script executable
@@ -101,6 +105,10 @@ chmod +x k8s-health-check.sh
 
 # Run POST-change health check (after maintenance)
 ./k8s-health-check.sh --mode post
+
+# For faster execution with multiple clusters, use parallel mode
+./k8s-health-check.sh --mode pre --parallel
+./k8s-health-check.sh --mode post --parallel
 ```
 
 ### PRE-Change Health Check
@@ -140,6 +148,35 @@ TMC_SELF_MANAGED_PASSWORD=mypass \
 # With debug output
 DEBUG=on ./k8s-health-check.sh --mode post
 ```
+
+### Parallel Execution (v3.4)
+
+For faster processing of multiple clusters, use the `--parallel` flag:
+
+```bash
+# PRE-check with parallel execution
+./k8s-health-check.sh --mode pre --parallel
+
+# POST-check with parallel execution
+./k8s-health-check.sh --mode post --parallel
+
+# With custom config file
+./k8s-health-check.sh --mode pre --parallel ./my-clusters.conf
+```
+
+**How it works:**
+1. TMC contexts are prepared sequentially first (to avoid race conditions)
+2. Health checks are launched in parallel for all clusters
+3. Results are collected and displayed once all checks complete
+
+**When to use parallel:**
+- Multiple clusters (3+) for significant time savings
+- Non-interactive environments (CI/CD pipelines)
+
+**When to use sequential (default):**
+- Debugging issues with specific clusters
+- When you want to see detailed progress per cluster
+- Single cluster checks
 
 ### Cache Management
 
