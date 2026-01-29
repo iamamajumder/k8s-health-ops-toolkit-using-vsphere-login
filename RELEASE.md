@@ -25,12 +25,18 @@
 - Removed: `Script Directory: /path/to/script`
 - Removed: `[INFO] Output directory: /path/to/output`
 - Removed: `[INFO] Updating 'latest' directory...`
+- Removed: `[INFO] Found X cluster(s) in configuration`
 - Keeps output cleaner and more focused on important information
 
 #### 5. Reduced Multi-line Spacing
 - Removed excessive blank lines between sections in console output
 - Removed extra blank line after each cluster summary
+- Reduced gap between "Clusters to process" and first cluster processing
 - Cleaner, more compact output
+
+#### 6. Added Pods Completed to Health Indicators
+- New metric: `Pods Completed: X` in Health Indicators section
+- Shows count of pods in Completed state (useful for tracking Job/CronJob completions)
 
 ### Files Modified
 

@@ -176,13 +176,9 @@ run_health_checks() {
     fi
 
     local cluster_count=$(count_clusters "${config_file}")
-    progress "Found ${cluster_count} cluster(s) in configuration"
-    echo ""
 
     # Display cluster list
     display_cluster_list "${config_file}" || exit 1
-
-    echo ""
 
     # Initialize counters
     local success_count=0
@@ -282,6 +278,9 @@ run_health_checks() {
         local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending || true)
         pods_pending=$(echo "${pods_pending}" | tr -d ' \n\r')
         pods_pending=${pods_pending:-0}
+        local pods_completed=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Completed || true)
+        pods_completed=$(echo "${pods_completed}" | tr -d ' \n\r')
+        pods_completed=${pods_completed:-0}
         local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
         local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
         local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -322,6 +321,7 @@ CLUSTER: ${cluster_name}
     Nodes NotReady: ${nodes_notready:-0}
     Pods CrashLoop: ${pods_crashloop:-0}
     Pods Pending: ${pods_pending:-0}
+    Pods Completed: ${pods_completed:-0}
   ---
   HEALTH STATUS: ${health_status}
 EOSUMMARY
