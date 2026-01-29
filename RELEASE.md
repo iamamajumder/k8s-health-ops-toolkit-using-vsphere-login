@@ -1,5 +1,34 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.2.3 (2026-01-29)
+
+### Bug Fix
+
+#### Fixed Script Exiting Silently During Health Check
+
+**Issue**: Script would exit abruptly without error after displaying "Running pre-change health check for..."
+
+**Root Cause**: `grep -c` returns exit code 1 when count is 0. Combined with `set -o pipefail`, this caused silent script termination when:
+1. Section 18 ran `grep -c ' Ready'` or `grep -c Running`
+2. The pipeline exit code propagated as failure
+3. Script exited with all output redirected to report file (no console error visible)
+
+**Fix**:
+1. Added `set +e` at script start to disable inherited exit-on-error
+2. Added `|| true` to all `grep -c` commands to prevent exit code 1 on zero matches
+3. Added proper variable sanitization (`${var:-0}`) before arithmetic operations
+4. Added error handling around health check block with exit code capture
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `k8s-health-check-pre.sh` | Added `set +e`, fixed `grep -c` pipefail issue, error handling |
+| `k8s-health-check-post.sh` | Added `set +e`, fixed `grep -c` pipefail issue, error handling |
+| `lib/sections/18-cluster-summary.sh` | Fixed `grep -c` commands with `|| true` fallback |
+
+---
+
 ## Version 3.2.2 (2026-01-29)
 
 ### New Feature

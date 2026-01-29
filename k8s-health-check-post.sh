@@ -268,10 +268,16 @@ run_health_checks() {
 
         # Capture Section 18 summary with health indicators for console display
         local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-        local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' | tr -d ' ')
+        nodes_total=${nodes_total:-0}
+        local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' || true)
+        nodes_ready=$(echo "${nodes_ready}" | tr -d ' \n\r')
+        nodes_ready=${nodes_ready:-0}
         local nodes_notready=$((nodes_total - nodes_ready))
         local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-        local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running | tr -d ' ')
+        pods_total=${pods_total:-0}
+        local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running || true)
+        pods_running=$(echo "${pods_running}" | tr -d ' \n\r')
+        pods_running=${pods_running:-0}
         local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff || true)
         pods_crashloop=$(echo "${pods_crashloop}" | tr -d ' \n\r')
         pods_crashloop=${pods_crashloop:-0}
