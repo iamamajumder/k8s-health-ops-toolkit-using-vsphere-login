@@ -2,26 +2,43 @@
 
 ## Version 3.4 (2026-01-29)
 
-### Parallel Execution for Health Checks
+### Batch Parallel Execution (Default)
 
-Added `--parallel` flag to `k8s-health-check.sh` for faster processing of multiple clusters.
+All scripts now run in **parallel batches of 6 clusters by default** for faster processing.
+
+**Default Behavior:**
+- Health checks, upgrades, and ops commands now run 6 clusters in parallel
+- No flag needed - parallel execution is the default
+- Use `--sequential` to process one cluster at a time
+- Use `--batch-size N` to customize the batch size
 
 **Usage:**
 ```bash
-# PRE-check with parallel execution
-./k8s-health-check.sh --mode pre --parallel
+# Parallel by default (6 clusters at a time)
+./k8s-health-check.sh --mode pre
+./k8s-cluster-upgrade.sh
+./k8s-ops-cmd.sh "kubectl get nodes"
 
-# POST-check with parallel execution
-./k8s-health-check.sh --mode post --parallel
+# Custom batch size (10 clusters at a time)
+./k8s-health-check.sh --mode pre --batch-size 10
+./k8s-cluster-upgrade.sh --batch-size 10
+./k8s-ops-cmd.sh --batch-size 10 "kubectl get nodes"
+
+# Sequential execution (one at a time)
+./k8s-health-check.sh --mode pre --sequential
+./k8s-cluster-upgrade.sh --sequential
+./k8s-ops-cmd.sh --sequential "kubectl get nodes"
 ```
 
 **How it works:**
 1. TMC contexts are prepared sequentially first (to avoid race conditions with tanzu CLI)
-2. Health checks are launched in parallel for all clusters (background processes)
-3. Results are collected via temp files and displayed once all checks complete
+2. Clusters are processed in batches (default: 6 at a time)
+3. Each batch completes before the next batch starts
+4. Results are collected via temp files and displayed at the end
 
 **Benefits:**
-- Significant time savings for multiple clusters (e.g., 5 clusters in parallel vs sequential)
+- Significant time savings for multiple clusters
+- Controlled resource usage (batch size limits concurrent processes)
 - Same output format and reports as sequential execution
 - Ideal for CI/CD pipelines and non-interactive environments
 

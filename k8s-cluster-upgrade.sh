@@ -36,6 +36,8 @@ DRY_RUN=false
 SKIP_HEALTH_CHECK=false
 FORCE_UPGRADE=false
 UPGRADE_TIMEOUT=${DEFAULT_TIMEOUT}
+PARALLEL_MODE="true"        # Parallel execution enabled by default
+BATCH_SIZE=6                # Default batch size for parallel execution
 
 #===============================================================================
 # Prerequisite Checks
@@ -72,6 +74,7 @@ Kubernetes Cluster Upgrade Script v3.4
 Usage: $0 [OPTIONS] [clusters.conf]
 
 Automates cluster upgrades with health validation before and after upgrade.
+By default, processes clusters in parallel batches of 6.
 
 Arguments:
   clusters.conf     Path to configuration file with cluster names (one per line)
@@ -83,6 +86,8 @@ Options:
   --skip-health-check     Skip PRE-upgrade health check (not recommended)
   --force                 Skip confirmation prompts for WARNINGS status
   --timeout <minutes>     Upgrade timeout in minutes (default: 30)
+  --sequential            Process clusters one at a time (default: parallel)
+  --batch-size N          Number of clusters to process in parallel (default: 6)
 
 Upgrade Decision Logic:
   HEALTHY   → Auto-proceed with upgrade
@@ -95,7 +100,7 @@ Environment Variables:
   DEBUG                        Set to 'on' for verbose output
 
 Examples:
-  # Upgrade clusters in default ./clusters.conf
+  # Upgrade clusters (parallel by default, 6 at a time)
   $0
 
   # Upgrade clusters from specific config
@@ -104,8 +109,14 @@ Examples:
   # Dry run (show what would happen)
   $0 --dry-run
 
-  # Force upgrade even with warnings
+  # Force upgrade even with warnings (skips prompts)
   $0 --force
+
+  # Sequential execution (one cluster at a time)
+  $0 --sequential
+
+  # Custom batch size (10 clusters at a time)
+  $0 --batch-size 10
 
   # Custom timeout (45 minutes)
   $0 --timeout 45
@@ -461,11 +472,304 @@ upgrade_cluster() {
 }
 
 #===============================================================================
+# Upgrade Single Cluster (For Parallel Execution)
+#===============================================================================
+
+upgrade_cluster_parallel() {
+    local cluster_name="$1"
+    local output_base_dir="$2"
+    local results_file="$3"
+
+    local status="SUCCESS"
+    local exit_code=0
+
+    # Create cluster output directory
+    local cluster_output_dir="${output_base_dir}/${cluster_name}"
+    mkdir -p "${cluster_output_dir}"
+
+    # Step 1: Fetch kubeconfig (TMC context already prepared)
+    local kubeconfig_file="${cluster_output_dir}/kubeconfig"
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
+        echo "CLUSTER:${cluster_name}|STATUS:FAILED|REASON:Failed to fetch kubeconfig" >> "${results_file}"
+        return 1
+    fi
+    export KUBECONFIG="${kubeconfig_file}"
+
+    # Step 2: Test connectivity
+    if ! test_kubeconfig_connectivity "${kubeconfig_file}" >/dev/null 2>&1; then
+        echo "CLUSTER:${cluster_name}|STATUS:FAILED|REASON:Cannot connect to cluster" >> "${results_file}"
+        return 1
+    fi
+
+    # Step 3: Get cluster metadata
+    local metadata
+    if ! metadata=$(discover_cluster_metadata "${cluster_name}" 2>/dev/null); then
+        echo "CLUSTER:${cluster_name}|STATUS:FAILED|REASON:Failed to discover metadata" >> "${results_file}"
+        return 1
+    fi
+    local mgmt_cluster=$(echo "${metadata}" | cut -d'|' -f1)
+    local provisioner=$(echo "${metadata}" | cut -d'|' -f2)
+
+    # Step 4: PRE-upgrade health check (unless skipped)
+    if [ "${SKIP_HEALTH_CHECK}" = false ]; then
+        collect_health_metrics
+        calculate_health_status
+
+        # Save PRE-upgrade health report
+        local pre_report="${cluster_output_dir}/pre-upgrade-health.txt"
+        {
+            echo "PRE-UPGRADE HEALTH CHECK"
+            echo "Cluster: ${cluster_name}"
+            echo "Timestamp: $(get_formatted_timestamp)"
+            echo "Status: ${HEALTH_STATUS}"
+        } > "${pre_report}"
+
+        case "${HEALTH_STATUS}" in
+            "HEALTHY")
+                # Proceed
+                ;;
+            "WARNINGS")
+                if [ "${FORCE_UPGRADE}" = false ] && [ "${DRY_RUN}" = false ]; then
+                    # In parallel mode, we can't prompt - skip if not --force
+                    echo "CLUSTER:${cluster_name}|STATUS:SKIPPED|REASON:Cluster has warnings (use --force to override)" >> "${results_file}"
+                    return 2
+                fi
+                ;;
+            "CRITICAL")
+                echo "CLUSTER:${cluster_name}|STATUS:SKIPPED|REASON:Cluster has CRITICAL issues" >> "${results_file}"
+                return 2
+                ;;
+        esac
+    fi
+
+    # Step 5: Execute upgrade (if not dry-run)
+    if [ "${DRY_RUN}" = true ]; then
+        echo "CLUSTER:${cluster_name}|STATUS:DRYRUN|REASON:Would upgrade cluster" >> "${results_file}"
+        return 0
+    fi
+
+    # Initiate upgrade
+    local upgrade_log="${cluster_output_dir}/upgrade-log.txt"
+    {
+        echo "UPGRADE LOG"
+        echo "Start Time: $(get_formatted_timestamp)"
+        echo "Command: tanzu tmc cluster upgrade ${cluster_name} -m ${mgmt_cluster} -p ${provisioner} --latest"
+    } > "${upgrade_log}"
+
+    if ! tanzu tmc cluster upgrade "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" --latest >> "${upgrade_log}" 2>&1; then
+        echo "CLUSTER:${cluster_name}|STATUS:FAILED|REASON:Failed to initiate upgrade" >> "${results_file}"
+        return 1
+    fi
+
+    # Step 6: Monitor upgrade
+    local start_time=$(date +%s)
+    local timeout_seconds=$((UPGRADE_TIMEOUT * 60))
+
+    while true; do
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+
+        if [ $elapsed -ge $timeout_seconds ]; then
+            echo "CLUSTER:${cluster_name}|STATUS:FAILED|REASON:Upgrade timeout after ${UPGRADE_TIMEOUT} minutes" >> "${results_file}"
+            return 1
+        fi
+
+        local status_json
+        if status_json=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null); then
+            local phase=$(echo "${status_json}" | jq -r '.status.phase // "UNKNOWN"')
+
+            case "${phase}" in
+                "READY")
+                    break
+                    ;;
+                "ERROR"|"FAILED")
+                    echo "CLUSTER:${cluster_name}|STATUS:FAILED|REASON:Upgrade failed (phase: ${phase})" >> "${results_file}"
+                    return 1
+                    ;;
+            esac
+        fi
+
+        sleep 30
+    done
+
+    # Step 7: POST-upgrade health check
+    sleep 10  # Wait for cluster to stabilize
+
+    # Refresh kubeconfig
+    fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1
+    export KUBECONFIG="${kubeconfig_file}"
+
+    collect_health_metrics
+    calculate_health_status
+
+    local post_report="${cluster_output_dir}/post-upgrade-health.txt"
+    {
+        echo "POST-UPGRADE HEALTH CHECK"
+        echo "Cluster: ${cluster_name}"
+        echo "Timestamp: $(get_formatted_timestamp)"
+        echo "Status: ${HEALTH_STATUS}"
+    } > "${post_report}"
+
+    # Write success
+    echo "CLUSTER:${cluster_name}|STATUS:SUCCESS|REASON:Upgrade completed (${HEALTH_STATUS})" >> "${results_file}"
+    return 0
+}
+
+#===============================================================================
+# Prepare TMC Contexts (Sequential - to avoid race conditions)
+#===============================================================================
+
+prepare_upgrade_tmc_contexts() {
+    local config_file="$1"
+
+    progress "Preparing TMC contexts for all clusters..."
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+    local current=0
+
+    while IFS= read -r cluster_name; do
+        current=$((current + 1))
+        debug "[${current}/${cluster_count}] Preparing TMC context for ${cluster_name}..."
+
+        ensure_tmc_context "${cluster_name}" >/dev/null 2>&1
+    done < <(echo "${cluster_list}")
+
+    success "TMC contexts prepared"
+}
+
+#===============================================================================
+# Run Upgrades in Parallel (Batch-based)
+#===============================================================================
+
+run_upgrades_parallel() {
+    local config_file="$1"
+    local output_base_dir="$2"
+    local batch_size="$3"
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+
+    # Create temp file for collecting results
+    local results_file=$(mktemp)
+    > "${results_file}"
+
+    # Calculate number of batches
+    local num_batches=$(( (cluster_count + batch_size - 1) / batch_size ))
+
+    progress "Processing ${cluster_count} clusters in batches of ${batch_size} (${num_batches} batch(es))..."
+    echo ""
+
+    # Convert cluster list to array
+    local -a clusters=()
+    while IFS= read -r cluster_name; do
+        clusters+=("${cluster_name}")
+    done < <(echo "${cluster_list}")
+
+    local global_idx=0
+    local batch_num=0
+
+    # Process clusters in batches
+    while [ ${global_idx} -lt ${cluster_count} ]; do
+        batch_num=$((batch_num + 1))
+        local batch_start=${global_idx}
+        local batch_end=$((global_idx + batch_size))
+        [ ${batch_end} -gt ${cluster_count} ] && batch_end=${cluster_count}
+        local batch_count=$((batch_end - batch_start))
+
+        echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
+
+        # Array to store PIDs for this batch
+        declare -A pids=()
+
+        # Launch batch
+        for ((i=batch_start; i<batch_end; i++)); do
+            local cluster_name="${clusters[$i]}"
+            local display_idx=$((i + 1))
+            echo -e "${MAGENTA}[${display_idx}/${cluster_count}]${NC} Launching upgrade: ${YELLOW}${cluster_name}${NC}"
+
+            upgrade_cluster_parallel "${cluster_name}" "${output_base_dir}" "${results_file}" &
+            pids["${cluster_name}"]=$!
+        done
+
+        # Wait for this batch to complete
+        echo ""
+        progress "Waiting for batch ${batch_num} to complete..."
+
+        for cluster_name in "${!pids[@]}"; do
+            wait ${pids[$cluster_name]} 2>/dev/null
+        done
+
+        success "Batch ${batch_num} completed"
+        echo ""
+
+        global_idx=${batch_end}
+    done
+
+    success "All ${cluster_count} upgrades processed"
+    echo ""
+
+    # Parse results
+    local success_count=0
+    local failed_count=0
+    local skipped_count=0
+    local dryrun_count=0
+    local failed_clusters=()
+    local skipped_clusters=()
+
+    print_section "Results Summary"
+
+    while IFS= read -r line; do
+        if [[ -z "${line}" ]]; then
+            continue
+        fi
+
+        local cluster_name=$(echo "${line}" | cut -d'|' -f1 | cut -d':' -f2)
+        local status=$(echo "${line}" | cut -d'|' -f2 | cut -d':' -f2)
+        local reason=$(echo "${line}" | cut -d'|' -f3 | cut -d':' -f2-)
+
+        case "${status}" in
+            "SUCCESS")
+                success_count=$((success_count + 1))
+                echo -e "${GREEN}[SUCCESS]${NC} ${cluster_name}: ${reason}"
+                ;;
+            "FAILED")
+                failed_count=$((failed_count + 1))
+                failed_clusters+=("${cluster_name}")
+                echo -e "${RED}[FAILED]${NC} ${cluster_name}: ${reason}"
+                ;;
+            "SKIPPED")
+                skipped_count=$((skipped_count + 1))
+                skipped_clusters+=("${cluster_name}")
+                echo -e "${YELLOW}[SKIPPED]${NC} ${cluster_name}: ${reason}"
+                ;;
+            "DRYRUN")
+                dryrun_count=$((dryrun_count + 1))
+                echo -e "${CYAN}[DRY-RUN]${NC} ${cluster_name}: ${reason}"
+                ;;
+        esac
+    done < "${results_file}"
+
+    # Cleanup temp file
+    rm -f "${results_file}"
+
+    # Return values via global variables
+    PARALLEL_SUCCESS_COUNT=${success_count}
+    PARALLEL_FAILED_COUNT=${failed_count}
+    PARALLEL_SKIPPED_COUNT=${skipped_count}
+    PARALLEL_DRYRUN_COUNT=${dryrun_count}
+    PARALLEL_FAILED_CLUSTERS=("${failed_clusters[@]}")
+    PARALLEL_SKIPPED_CLUSTERS=("${skipped_clusters[@]}")
+}
+
+#===============================================================================
 # Main Upgrade Orchestration
 #===============================================================================
 
 run_cluster_upgrades() {
     local config_file="$1"
+    local parallel="$2"
+    local batch_size="$3"
 
     # Validate configuration
     if ! load_configuration "${config_file}"; then
@@ -477,6 +781,11 @@ run_cluster_upgrades() {
 
     display_info "Configuration File" "${config_file}"
     display_info "Upgrade Timeout" "${UPGRADE_TIMEOUT} minutes"
+    if [[ "${parallel}" == "true" ]]; then
+        display_info "Execution Mode" "Parallel (batch size: ${batch_size})"
+    else
+        display_info "Execution Mode" "Sequential"
+    fi
     display_info "Dry Run" "${DRY_RUN}"
     display_info "Force Mode" "${FORCE_UPGRADE}"
     display_info "Started" "$(get_formatted_timestamp)"
@@ -507,32 +816,51 @@ run_cluster_upgrades() {
     local failed_clusters=()
     local skipped_clusters=()
 
-    # Process each cluster
-    while IFS= read -r cluster_name; do
-        current=$((current + 1))
-
+    if [[ "${parallel}" == "true" ]]; then
+        # Parallel execution (batch-based)
         echo ""
-        echo -e "${MAGENTA}[${current}/${cluster_count}]${NC} Upgrading: ${YELLOW}${cluster_name}${NC}"
 
-        local result
-        upgrade_cluster "${cluster_name}" "${output_base_dir}"
-        result=$?
+        # Prepare TMC contexts sequentially first (to avoid race conditions)
+        prepare_upgrade_tmc_contexts "${config_file}"
+        echo ""
 
-        case $result in
-            0)
-                success_count=$((success_count + 1))
-                ;;
-            1)
-                failed_count=$((failed_count + 1))
-                failed_clusters+=("${cluster_name}")
-                ;;
-            2)
-                skipped_count=$((skipped_count + 1))
-                skipped_clusters+=("${cluster_name}")
-                ;;
-        esac
+        # Run upgrades in parallel batches
+        run_upgrades_parallel "${config_file}" "${output_base_dir}" "${batch_size}"
 
-    done < <(get_cluster_list "${config_file}")
+        # Get results from global variables
+        success_count=${PARALLEL_SUCCESS_COUNT}
+        failed_count=${PARALLEL_FAILED_COUNT}
+        skipped_count=${PARALLEL_SKIPPED_COUNT}
+        failed_clusters=("${PARALLEL_FAILED_CLUSTERS[@]}")
+        skipped_clusters=("${PARALLEL_SKIPPED_CLUSTERS[@]}")
+    else
+        # Sequential execution (original behavior)
+        while IFS= read -r cluster_name; do
+            current=$((current + 1))
+
+            echo ""
+            echo -e "${MAGENTA}[${current}/${cluster_count}]${NC} Upgrading: ${YELLOW}${cluster_name}${NC}"
+
+            local result
+            upgrade_cluster "${cluster_name}" "${output_base_dir}"
+            result=$?
+
+            case $result in
+                0)
+                    success_count=$((success_count + 1))
+                    ;;
+                1)
+                    failed_count=$((failed_count + 1))
+                    failed_clusters+=("${cluster_name}")
+                    ;;
+                2)
+                    skipped_count=$((skipped_count + 1))
+                    skipped_clusters+=("${cluster_name}")
+                    ;;
+            esac
+
+        done < <(get_cluster_list "${config_file}")
+    fi
 
     # Display summary
     echo ""
@@ -605,6 +933,25 @@ parse_arguments() {
                 fi
                 shift
                 ;;
+            --sequential)
+                PARALLEL_MODE="false"
+                shift
+                ;;
+            --parallel)
+                # Keep for backward compatibility (parallel is now default)
+                PARALLEL_MODE="true"
+                shift
+                ;;
+            --batch-size)
+                shift
+                if [[ -n "$1" ]] && [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" -gt 0 ]]; then
+                    BATCH_SIZE="$1"
+                else
+                    error "Invalid batch size: $1 (must be a positive integer)"
+                    exit 1
+                fi
+                shift
+                ;;
             -*)
                 error "Unknown option: $1"
                 show_usage
@@ -632,7 +979,7 @@ parse_arguments() {
 main() {
     check_prerequisites
     parse_arguments "$@"
-    run_cluster_upgrades "${CONFIG_FILE}"
+    run_cluster_upgrades "${CONFIG_FILE}" "${PARALLEL_MODE}" "${BATCH_SIZE}"
 }
 
 main "$@"

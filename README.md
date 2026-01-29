@@ -6,16 +6,16 @@
 
 ## What's New in v3.4
 
-- **Parallel Execution for Health Checks**: New `--parallel` flag for `k8s-health-check.sh`
-  - Run health checks on multiple clusters simultaneously
-  - Significant time savings for large cluster counts
-  - TMC contexts prepared sequentially, health checks run in parallel
+- **Batch Parallel Execution (Default)**: All scripts now run in parallel batches of 6 clusters by default
+  - `--batch-size N` option to customize batch size
+  - `--sequential` option for one-at-a-time processing
+  - TMC contexts prepared sequentially, then clusters processed in parallel batches
 - **Automated Cluster Upgrade**: New `k8s-cluster-upgrade.sh` with health-gated upgrades
   - PRE-upgrade health validation (HEALTHY=auto, WARNINGS=prompt, CRITICAL=abort)
   - TMC-based upgrade execution with progress monitoring
   - POST-upgrade health comparison with detailed reports
 - **Multi-Cluster Ops Command**: New `k8s-ops-cmd.sh` for running commands across all clusters
-  - Parallel execution for faster results
+  - Parallel batch execution for faster results
   - Formatted output to terminal and file
   - Reuses existing TMC context/kubeconfig caching
 
@@ -149,34 +149,38 @@ TMC_SELF_MANAGED_PASSWORD=mypass \
 DEBUG=on ./k8s-health-check.sh --mode post
 ```
 
-### Parallel Execution (v3.4)
+### Parallel Execution (Default in v3.4)
 
-For faster processing of multiple clusters, use the `--parallel` flag:
+All scripts now run in **parallel batches of 6 clusters by default** for faster processing.
 
 ```bash
-# PRE-check with parallel execution
-./k8s-health-check.sh --mode pre --parallel
+# PRE-check (parallel by default, 6 clusters at a time)
+./k8s-health-check.sh --mode pre
 
-# POST-check with parallel execution
-./k8s-health-check.sh --mode post --parallel
+# POST-check (parallel by default)
+./k8s-health-check.sh --mode post
 
-# With custom config file
-./k8s-health-check.sh --mode pre --parallel ./my-clusters.conf
+# Custom batch size (10 clusters at a time)
+./k8s-health-check.sh --mode pre --batch-size 10
+
+# Sequential execution (one cluster at a time)
+./k8s-health-check.sh --mode pre --sequential
 ```
 
 **How it works:**
 1. TMC contexts are prepared sequentially first (to avoid race conditions)
-2. Health checks are launched in parallel for all clusters
-3. Results are collected and displayed once all checks complete
+2. Clusters are processed in batches (default: 6 at a time)
+3. Each batch completes before the next batch starts
+4. Results are collected and displayed at the end
 
-**When to use parallel:**
-- Multiple clusters (3+) for significant time savings
-- Non-interactive environments (CI/CD pipelines)
-
-**When to use sequential (default):**
+**When to use sequential (`--sequential`):**
 - Debugging issues with specific clusters
 - When you want to see detailed progress per cluster
 - Single cluster checks
+
+**Customizing batch size (`--batch-size N`):**
+- Increase for faster execution on powerful machines
+- Decrease if encountering resource constraints
 
 ### Cache Management
 

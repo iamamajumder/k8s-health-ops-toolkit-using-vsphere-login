@@ -27,6 +27,7 @@ source "${SCRIPT_DIR}/lib/tmc.sh"
 DEFAULT_TIMEOUT=30          # Default command timeout in seconds
 DEFAULT_CONFIG="./clusters.conf"
 OUTPUT_DIR="${SCRIPT_DIR}/ops-results"
+BATCH_SIZE=6                # Default batch size for parallel execution
 
 #===============================================================================
 # Usage Function
@@ -37,11 +38,11 @@ show_usage() {
 Kubernetes Multi-Cluster Ops Command Script v3.4
 
 Usage:
-  $0 "<command>" [clusters.conf]
+  $0 [OPTIONS] "<command>" [clusters.conf]
 
 Description:
   Execute the same command across all clusters defined in clusters.conf.
-  Commands run in parallel for faster execution.
+  Commands run in parallel batches of 6 by default for faster execution.
 
 Arguments:
   <command>         The command to execute on each cluster (required)
@@ -53,10 +54,11 @@ Options:
   -h, --help        Show this help message
   --timeout <sec>   Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
   --sequential      Run commands sequentially instead of parallel
+  --batch-size N    Number of clusters to process in parallel (default: 6)
   --output-only     Minimal terminal output, save full results to file
 
 Examples:
-  # Get Contour version on all clusters
+  # Get Contour version on all clusters (parallel by default)
   $0 "kubectl get deploy -n projectcontour contour -o jsonpath='{.spec.template.spec.containers[0].image}'"
 
   # Check cert-manager version
@@ -68,11 +70,11 @@ Examples:
   # Check Kubernetes version
   $0 "kubectl version --short 2>/dev/null | grep Server"
 
-  # Get Antrea pod count
-  $0 "kubectl get pods -n kube-system -l app=antrea --no-headers | wc -l"
-
   # With custom config and timeout
   $0 --timeout 60 "kubectl get pods -A" ./my-clusters.conf
+
+  # Custom batch size (10 clusters at a time)
+  $0 --batch-size 10 "kubectl get nodes"
 
   # Sequential execution (one cluster at a time)
   $0 --sequential "kubectl get nodes"
@@ -164,7 +166,7 @@ execute_on_cluster() {
 }
 
 #===============================================================================
-# Run Commands in Parallel
+# Run Commands in Parallel (Batch-based)
 #===============================================================================
 
 run_parallel() {
@@ -172,6 +174,7 @@ run_parallel() {
     local config_file="$2"
     local timeout_sec="$3"
     local results_dir="$4"
+    local batch_size="$5"
 
     local cluster_list=$(get_cluster_list "${config_file}")
     local cluster_count=$(count_clusters "${config_file}")
@@ -180,26 +183,56 @@ run_parallel() {
     local results_file="${results_dir}/raw_results.txt"
     > "${results_file}"
 
-    # Array to store PIDs
-    declare -A pids
+    # Calculate number of batches
+    local num_batches=$(( (cluster_count + batch_size - 1) / batch_size ))
 
-    progress "Launching commands on ${cluster_count} clusters in parallel..."
+    progress "Processing ${cluster_count} clusters in batches of ${batch_size} (${num_batches} batch(es))..."
+    echo ""
 
-    # Launch all commands in parallel
-    local idx=0
+    # Convert cluster list to array
+    local -a clusters=()
     while IFS= read -r cluster_name; do
-        idx=$((idx + 1))
-        debug "Launching command on cluster ${idx}/${cluster_count}: ${cluster_name}"
-
-        execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" &
-        pids["${cluster_name}"]=$!
+        clusters+=("${cluster_name}")
     done < <(echo "${cluster_list}")
 
-    # Wait for all processes and collect exit codes
-    declare -A exit_codes
-    for cluster_name in "${!pids[@]}"; do
-        wait ${pids[$cluster_name]} 2>/dev/null
-        exit_codes["${cluster_name}"]=$?
+    local global_idx=0
+    local batch_num=0
+
+    # Process clusters in batches
+    while [ ${global_idx} -lt ${cluster_count} ]; do
+        batch_num=$((batch_num + 1))
+        local batch_start=${global_idx}
+        local batch_end=$((global_idx + batch_size))
+        [ ${batch_end} -gt ${cluster_count} ] && batch_end=${cluster_count}
+        local batch_count=$((batch_end - batch_start))
+
+        echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
+
+        # Array to store PIDs for this batch
+        declare -A pids=()
+
+        # Launch batch
+        for ((i=batch_start; i<batch_end; i++)); do
+            local cluster_name="${clusters[$i]}"
+            local display_idx=$((i + 1))
+            echo -e "${MAGENTA}[${display_idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
+
+            execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" &
+            pids["${cluster_name}"]=$!
+        done
+
+        # Wait for this batch to complete
+        echo ""
+        progress "Waiting for batch ${batch_num} to complete..."
+
+        for cluster_name in "${!pids[@]}"; do
+            wait ${pids[$cluster_name]} 2>/dev/null
+        done
+
+        success "Batch ${batch_num} completed"
+        echo ""
+
+        global_idx=${batch_end}
     done
 
     # Return results file path
@@ -382,6 +415,7 @@ run_ops_command() {
     local timeout_sec="$3"
     local parallel="$4"
     local output_only="$5"
+    local batch_size="$6"
 
     # Validate config file
     if [[ ! -f "${config_file}" ]]; then
@@ -413,13 +447,17 @@ run_ops_command() {
     display_info "Command" "${command}"
     display_info "Clusters" "${cluster_count}"
     display_info "Timeout" "${timeout_sec}s"
-    display_info "Execution" "$([ "${parallel}" == "true" ] && echo "Parallel" || echo "Sequential")"
+    if [[ "${parallel}" == "true" ]]; then
+        display_info "Execution" "Parallel (batch size: ${batch_size})"
+    else
+        display_info "Execution" "Sequential"
+    fi
     echo ""
 
     # Execute commands
     local results_file
     if [[ "${parallel}" == "true" ]]; then
-        results_file=$(run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}")
+        results_file=$(run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}")
     else
         results_file=$(run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}")
     fi
@@ -445,6 +483,7 @@ parse_arguments() {
     local timeout_sec="${DEFAULT_TIMEOUT}"
     local parallel="true"
     local output_only="false"
+    local batch_size="${BATCH_SIZE}"
 
     # Parse named arguments
     while [[ $# -gt 0 ]]; do
@@ -464,6 +503,21 @@ parse_arguments() {
                 ;;
             --sequential)
                 parallel="false"
+                shift
+                ;;
+            --parallel)
+                # Keep for backward compatibility (parallel is now default)
+                parallel="true"
+                shift
+                ;;
+            --batch-size)
+                shift
+                if [[ -n "$1" ]] && [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" -gt 0 ]]; then
+                    batch_size="$1"
+                else
+                    error "Invalid batch size: $1 (must be a positive integer)"
+                    exit 1
+                fi
                 shift
                 ;;
             --output-only)
@@ -494,7 +548,7 @@ parse_arguments() {
     fi
 
     # Run the ops command
-    run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}"
+    run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}" "${batch_size}"
 }
 
 #===============================================================================

@@ -38,7 +38,8 @@ done
 # Default mode
 CHECK_MODE=""
 PRE_RESULTS_DIR=""
-PARALLEL_MODE="false"
+PARALLEL_MODE="true"       # Parallel execution enabled by default
+BATCH_SIZE=6               # Default batch size for parallel execution
 
 #===============================================================================
 # Prerequisite Checks
@@ -78,8 +79,8 @@ show_usage() {
 Kubernetes Cluster Health Check (Unified Script v3.4)
 
 Usage:
-  PRE-change:   $0 --mode pre [--parallel] [clusters.conf]
-  POST-change:  $0 --mode post [--parallel] [clusters.conf] [pre-results-dir]
+  PRE-change:   $0 --mode pre [options] [clusters.conf]
+  POST-change:  $0 --mode post [options] [clusters.conf] [pre-results-dir]
 
 Modes:
   --mode pre    Run PRE-change health check (capture baseline before changes)
@@ -102,7 +103,7 @@ Features:
   - Caches cluster metadata for performance
   - Enhanced health summary with HEALTHY/WARNINGS/CRITICAL status
   - PRE vs POST comparison with deltas (POST mode)
-  - Parallel execution for faster processing of multiple clusters
+  - Batch parallel execution (6 clusters at a time by default)
 
 Cluster Naming Pattern:
   *-prod-[1-4]         → Production TMC context
@@ -117,22 +118,26 @@ Environment Variables:
 Options:
   -h, --help           Show this help message
   --mode pre|post      Specify check mode (required)
-  --parallel           Run health checks in parallel (faster for multiple clusters)
+  --sequential         Run health checks one at a time (default: parallel)
+  --batch-size N       Number of clusters to process in parallel (default: 6)
   --cache-status       Show cache status
   --clear-cache        Clear all cached data
 
 Examples:
-  # PRE-change health check (run before making changes)
+  # PRE-change health check (parallel by default, 6 clusters at a time)
   $0 --mode pre
   $0 --mode pre ./clusters.conf
 
-  # POST-change health check (run after making changes)
+  # POST-change health check (parallel by default)
   $0 --mode post
   $0 --mode post ./clusters.conf ./health-check-results/pre-20250122_143000
 
-  # Parallel execution (faster for multiple clusters)
-  $0 --mode pre --parallel
-  $0 --mode post --parallel
+  # Sequential execution (one cluster at a time)
+  $0 --mode pre --sequential
+  $0 --mode post --sequential
+
+  # Custom batch size (10 clusters at a time)
+  $0 --mode pre --batch-size 10
 
   # With debug output
   DEBUG=on $0 --mode pre
@@ -381,7 +386,7 @@ prepare_tmc_contexts() {
 }
 
 #===============================================================================
-# Run Health Checks in Parallel
+# Run Health Checks in Parallel (Batch-based)
 #===============================================================================
 
 run_health_checks_parallel() {
@@ -389,6 +394,7 @@ run_health_checks_parallel() {
     local mode="$2"
     local pre_results_dir="$3"
     local output_base_dir="$4"
+    local batch_size="$5"
 
     local cluster_list=$(get_cluster_list "${config_file}")
     local cluster_count=$(count_clusters "${config_file}")
@@ -397,33 +403,59 @@ run_health_checks_parallel() {
     local results_file=$(mktemp)
     > "${results_file}"
 
-    # Array to store PIDs
-    declare -A pids
+    # Calculate number of batches
+    local num_batches=$(( (cluster_count + batch_size - 1) / batch_size ))
 
-    progress "Launching health checks on ${cluster_count} clusters in parallel..."
+    progress "Processing ${cluster_count} clusters in batches of ${batch_size} (${num_batches} batch(es))..."
     echo ""
 
-    # Launch all health checks in parallel
-    local idx=0
+    # Convert cluster list to array
+    local -a clusters=()
     while IFS= read -r cluster_name; do
-        idx=$((idx + 1))
-        echo -e "${MAGENTA}[${idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
-
-        process_cluster_parallel "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}" "${results_file}" &
-        pids["${cluster_name}"]=$!
+        clusters+=("${cluster_name}")
     done < <(echo "${cluster_list}")
 
-    echo ""
-    progress "Waiting for all health checks to complete..."
+    local global_idx=0
+    local batch_num=0
 
-    # Wait for all processes
-    declare -A exit_codes
-    for cluster_name in "${!pids[@]}"; do
-        wait ${pids[$cluster_name]} 2>/dev/null
-        exit_codes["${cluster_name}"]=$?
+    # Process clusters in batches
+    while [ ${global_idx} -lt ${cluster_count} ]; do
+        batch_num=$((batch_num + 1))
+        local batch_start=${global_idx}
+        local batch_end=$((global_idx + batch_size))
+        [ ${batch_end} -gt ${cluster_count} ] && batch_end=${cluster_count}
+        local batch_count=$((batch_end - batch_start))
+
+        echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
+
+        # Array to store PIDs for this batch
+        declare -A pids=()
+
+        # Launch batch
+        for ((i=batch_start; i<batch_end; i++)); do
+            local cluster_name="${clusters[$i]}"
+            local display_idx=$((i + 1))
+            echo -e "${MAGENTA}[${display_idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
+
+            process_cluster_parallel "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}" "${results_file}" &
+            pids["${cluster_name}"]=$!
+        done
+
+        # Wait for this batch to complete
+        echo ""
+        progress "Waiting for batch ${batch_num} to complete..."
+
+        for cluster_name in "${!pids[@]}"; do
+            wait ${pids[$cluster_name]} 2>/dev/null
+        done
+
+        success "Batch ${batch_num} completed"
+        echo ""
+
+        global_idx=${batch_end}
     done
 
-    success "All health checks completed"
+    success "All ${cluster_count} health checks completed"
     echo ""
 
     # Parse results
@@ -431,6 +463,8 @@ run_health_checks_parallel() {
     local failed_count=0
     local failed_clusters=()
     declare -a cluster_summaries=()
+
+    print_section "Results Summary"
 
     while IFS= read -r line; do
         if [[ -z "${line}" ]]; then
@@ -471,6 +505,7 @@ run_health_checks() {
     local mode="$2"
     local pre_results_dir="$3"
     local parallel="$4"
+    local batch_size="$5"
 
     # POST mode: Validate PRE-results directory
     if [[ "${mode}" == "post" ]]; then
@@ -491,7 +526,11 @@ run_health_checks() {
 
     display_info "Configuration File" "${config_file}"
     [[ "${mode}" == "post" ]] && display_info "PRE Results Directory" "${pre_results_dir}"
-    display_info "Execution Mode" "$([ "${parallel}" == "true" ] && echo "Parallel" || echo "Sequential")"
+    if [[ "${parallel}" == "true" ]]; then
+        display_info "Execution Mode" "Parallel (batch size: ${batch_size})"
+    else
+        display_info "Execution Mode" "Sequential"
+    fi
     display_info "Started" "$(get_formatted_timestamp)"
     echo ""
 
@@ -525,15 +564,15 @@ run_health_checks() {
     declare -a cluster_summaries=()
 
     if [[ "${parallel}" == "true" ]]; then
-        # Parallel execution
+        # Parallel execution (batch-based)
         echo ""
 
         # Prepare TMC contexts sequentially first (to avoid race conditions)
         prepare_tmc_contexts "${config_file}"
         echo ""
 
-        # Run health checks in parallel
-        run_health_checks_parallel "${config_file}" "${mode}" "${pre_results_dir}" "${output_base_dir}"
+        # Run health checks in parallel batches
+        run_health_checks_parallel "${config_file}" "${mode}" "${pre_results_dir}" "${output_base_dir}" "${batch_size}"
 
         # Get results from global variables
         success_count=${PARALLEL_SUCCESS_COUNT}
@@ -656,8 +695,23 @@ parse_arguments() {
                 fi
                 shift
                 ;;
+            --sequential)
+                PARALLEL_MODE="false"
+                shift
+                ;;
             --parallel)
+                # Keep for backward compatibility (parallel is now default)
                 PARALLEL_MODE="true"
+                shift
+                ;;
+            --batch-size)
+                shift
+                if [[ -n "$1" ]] && [[ "$1" =~ ^[0-9]+$ ]] && [[ "$1" -gt 0 ]]; then
+                    BATCH_SIZE="$1"
+                else
+                    error "Invalid batch size: $1 (must be a positive integer)"
+                    exit 1
+                fi
                 shift
                 ;;
             *)
@@ -746,7 +800,7 @@ main() {
     parse_arguments "$@"
 
     # Run health checks
-    run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}" "${PARALLEL_MODE}"
+    run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}" "${PARALLEL_MODE}" "${BATCH_SIZE}"
 }
 
 main "$@"
