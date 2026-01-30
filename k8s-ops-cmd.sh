@@ -449,11 +449,8 @@ run_ops_command() {
     fi
     echo ""
 
-    # Prompt for TMC credentials if not set (only prompts once)
-    if ! prompt_tmc_credentials; then
-        error "TMC credentials are required"
-        exit 1
-    fi
+    # Note: Credentials will be prompted inside ensure_tmc_context() only if
+    # a new context needs to be created (existing valid contexts are reused)
 
     # Execute commands
     # Use known path instead of capturing output (which would include progress messages)

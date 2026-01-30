@@ -800,11 +800,8 @@ upgrade_cluster_parallel() {
 prepare_upgrade_tmc_contexts() {
     local config_file="$1"
 
-    # Prompt for TMC credentials if not set (only prompts once)
-    if ! prompt_tmc_credentials; then
-        error "TMC credentials are required"
-        return 1
-    fi
+    # Note: Credentials will be prompted inside ensure_tmc_context() only if
+    # a new context needs to be created (existing valid contexts are reused)
 
     progress "Preparing TMC contexts for all clusters..."
 
