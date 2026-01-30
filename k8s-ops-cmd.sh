@@ -234,9 +234,6 @@ run_parallel() {
 
         global_idx=${batch_end}
     done
-
-    # Return results file path
-    echo "${results_file}"
 }
 
 #===============================================================================
@@ -265,8 +262,6 @@ run_sequential() {
 
         execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}"
     done < <(echo "${cluster_list}")
-
-    echo "${results_file}"
 }
 
 #===============================================================================
@@ -455,11 +450,13 @@ run_ops_command() {
     echo ""
 
     # Execute commands
-    local results_file
+    # Use known path instead of capturing output (which would include progress messages)
+    local results_file="${results_dir}/raw_results.txt"
+
     if [[ "${parallel}" == "true" ]]; then
-        results_file=$(run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}")
+        run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}"
     else
-        results_file=$(run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}")
+        run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}"
     fi
 
     # Display and save results

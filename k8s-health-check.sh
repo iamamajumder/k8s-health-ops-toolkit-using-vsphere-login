@@ -291,8 +291,6 @@ process_cluster_parallel() {
     local results_file="$5"
 
     local status="SUCCESS"
-    local summary=""
-    local exit_code=0
 
     # Create cluster output directory
     local cluster_output_dir="${output_base_dir}/${cluster_name}"
@@ -301,9 +299,13 @@ process_cluster_parallel() {
     # Fetch kubeconfig with auto-discovery (TMC context already prepared)
     local kubeconfig_file="${cluster_output_dir}/kubeconfig"
     if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
-        status="FAILED"
-        summary="Failed to fetch kubeconfig"
-        echo "CLUSTER:${cluster_name}|STATUS:${status}|SUMMARY:${summary}" >> "${results_file}"
+        {
+            echo "===CLUSTER_START==="
+            echo "CLUSTER_NAME:${cluster_name}"
+            echo "STATUS:FAILED"
+            echo "ERROR:Failed to fetch kubeconfig"
+            echo "===CLUSTER_END==="
+        } >> "${results_file}"
         return 1
     fi
 
@@ -312,9 +314,13 @@ process_cluster_parallel() {
 
     # Test connectivity
     if ! test_kubeconfig_connectivity "${kubeconfig_file}" >/dev/null 2>&1; then
-        status="FAILED"
-        summary="Cannot connect to cluster"
-        echo "CLUSTER:${cluster_name}|STATUS:${status}|SUMMARY:${summary}" >> "${results_file}"
+        {
+            echo "===CLUSTER_START==="
+            echo "CLUSTER_NAME:${cluster_name}"
+            echo "STATUS:FAILED"
+            echo "ERROR:Cannot connect to cluster"
+            echo "===CLUSTER_END==="
+        } >> "${results_file}"
         return 1
     fi
 
@@ -331,9 +337,6 @@ process_cluster_parallel() {
     collect_health_metrics
     calculate_health_status
 
-    # Generate cluster summary
-    summary=$(generate_health_summary "${cluster_name}")
-
     # POST mode: Generate comparison report
     if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
         local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
@@ -346,8 +349,43 @@ process_cluster_parallel() {
         fi
     fi
 
-    # Write result to results file
-    echo "CLUSTER:${cluster_name}|STATUS:${status}|SUMMARY:${summary}" >> "${results_file}"
+    # Write result to results file using marker-based format (avoids multiline summary issues)
+    {
+        echo "===CLUSTER_START==="
+        echo "CLUSTER_NAME:${cluster_name}"
+        echo "STATUS:${status}"
+        echo "HEALTH_STATUS:${HEALTH_STATUS}"
+        echo "CRITICAL_COUNT:${HEALTH_CRITICAL_COUNT:-0}"
+        echo "WARNING_COUNT:${HEALTH_WARNING_COUNT:-0}"
+        echo "NODES_TOTAL:${HEALTH_NODES_TOTAL:-0}"
+        echo "NODES_READY:${HEALTH_NODES_READY:-0}"
+        echo "NODES_NOTREADY:${HEALTH_NODES_NOTREADY:-0}"
+        echo "PODS_TOTAL:${HEALTH_PODS_TOTAL:-0}"
+        echo "PODS_RUNNING:${HEALTH_PODS_RUNNING:-0}"
+        echo "PODS_NOTRUNNING:$((HEALTH_PODS_TOTAL - HEALTH_PODS_RUNNING))"
+        echo "PODS_CRASHLOOP:${HEALTH_PODS_CRASHLOOP:-0}"
+        echo "PODS_PENDING:${HEALTH_PODS_PENDING:-0}"
+        echo "PODS_COMPLETED:${HEALTH_PODS_COMPLETED:-0}"
+        echo "PODS_UNACCOUNTED:${HEALTH_PODS_UNACCOUNTED:-0}"
+        echo "DEPLOYS_TOTAL:${HEALTH_DEPLOYS_TOTAL:-0}"
+        echo "DEPLOYS_READY:${HEALTH_DEPLOYS_READY:-0}"
+        echo "DEPLOYS_NOTREADY:${HEALTH_DEPLOYS_NOTREADY:-0}"
+        echo "DS_TOTAL:${HEALTH_DS_TOTAL:-0}"
+        echo "DS_READY:${HEALTH_DS_READY:-0}"
+        echo "DS_NOTREADY:${HEALTH_DS_NOTREADY:-0}"
+        echo "STS_TOTAL:${HEALTH_STS_TOTAL:-0}"
+        echo "STS_READY:${HEALTH_STS_READY:-0}"
+        echo "STS_NOTREADY:${HEALTH_STS_NOTREADY:-0}"
+        echo "PVC_TOTAL:${HEALTH_PVC_TOTAL:-0}"
+        echo "PVC_BOUND:${HEALTH_PVC_BOUND:-0}"
+        echo "PVC_NOTBOUND:${HEALTH_PVC_NOTBOUND:-0}"
+        echo "HELM_TOTAL:${HEALTH_HELM_TOTAL:-0}"
+        echo "HELM_DEPLOYED:${HEALTH_HELM_DEPLOYED:-0}"
+        echo "HELM_FAILED:${HEALTH_HELM_FAILED:-0}"
+        echo "NAMESPACES:$(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        echo "SERVICES:$(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        echo "===CLUSTER_END==="
+    } >> "${results_file}"
     return 0
 }
 
@@ -458,36 +496,181 @@ run_health_checks_parallel() {
     success "All ${cluster_count} health checks completed"
     echo ""
 
-    # Parse results
+    # Parse results using marker-based format
     local success_count=0
     local failed_count=0
     local failed_clusters=()
+    declare -a processed_clusters=()
     declare -a cluster_summaries=()
 
     print_section "Results Summary"
 
+    # Read the results file and parse blocks
+    local in_block=false
+    local current_cluster=""
+    local current_status=""
+    local current_health_status=""
+    local current_critical=0
+    local current_warnings=0
+    declare -A current_metrics
+
     while IFS= read -r line; do
-        if [[ -z "${line}" ]]; then
+        if [[ "${line}" == "===CLUSTER_START===" ]]; then
+            in_block=true
+            current_metrics=()
             continue
         fi
 
-        local cluster_name=$(echo "${line}" | cut -d'|' -f1 | cut -d':' -f2)
-        local status=$(echo "${line}" | cut -d'|' -f2 | cut -d':' -f2)
-        local summary=$(echo "${line}" | cut -d'|' -f3 | cut -d':' -f2-)
+        if [[ "${line}" == "===CLUSTER_END===" ]]; then
+            in_block=false
+            # Process the collected cluster data
+            current_cluster="${current_metrics[CLUSTER_NAME]}"
+            current_status="${current_metrics[STATUS]}"
+            current_health_status="${current_metrics[HEALTH_STATUS]}"
+            current_critical="${current_metrics[CRITICAL_COUNT]:-0}"
+            current_warnings="${current_metrics[WARNING_COUNT]:-0}"
 
-        if [[ "${status}" == "SUCCESS" ]]; then
-            success_count=$((success_count + 1))
-            cluster_summaries+=("${summary}")
-            echo -e "${GREEN}[SUCCESS]${NC} ${cluster_name}"
-        else
-            failed_count=$((failed_count + 1))
-            failed_clusters+=("${cluster_name}")
-            echo -e "${RED}[FAILED]${NC} ${cluster_name}: ${summary}"
+            if [[ "${current_status}" == "SUCCESS" ]]; then
+                success_count=$((success_count + 1))
+                processed_clusters+=("${current_cluster}")
+
+                # Display formatted summary for this cluster
+                echo ""
+                echo -e "${GREEN}[SUCCESS]${NC} ${YELLOW}${current_cluster}${NC}"
+                echo ""
+                echo "--- Resource Counts ---"
+                echo ""
+                echo "Nodes Total: ${current_metrics[NODES_TOTAL]:-0}"
+                echo "Nodes Ready: ${current_metrics[NODES_READY]:-0}"
+                echo "Pods Total: ${current_metrics[PODS_TOTAL]:-0}"
+                echo "Pods Running: ${current_metrics[PODS_RUNNING]:-0}"
+                echo "Pods Not Running: ${current_metrics[PODS_NOTRUNNING]:-0}"
+                echo "Deployments Total: ${current_metrics[DEPLOYS_TOTAL]:-0}"
+                echo "DaemonSets Total: ${current_metrics[DS_TOTAL]:-0}"
+                echo "StatefulSets Total: ${current_metrics[STS_TOTAL]:-0}"
+                echo "Services Total: ${current_metrics[SERVICES]:-0}"
+                echo "PVCs Total: ${current_metrics[PVC_TOTAL]:-0}"
+                echo "Namespaces: ${current_metrics[NAMESPACES]:-0}"
+                echo "Helm Releases: ${current_metrics[HELM_TOTAL]:-0}"
+                echo ""
+                echo "--- Health Indicators ---"
+                echo ""
+
+                # Display health indicators with status
+                local nodes_notready="${current_metrics[NODES_NOTREADY]:-0}"
+                local pods_crashloop="${current_metrics[PODS_CRASHLOOP]:-0}"
+                local pods_pending="${current_metrics[PODS_PENDING]:-0}"
+                local deploys_notready="${current_metrics[DEPLOYS_NOTREADY]:-0}"
+                local ds_notready="${current_metrics[DS_NOTREADY]:-0}"
+                local sts_notready="${current_metrics[STS_NOTREADY]:-0}"
+                local pvc_notbound="${current_metrics[PVC_NOTBOUND]:-0}"
+                local helm_failed="${current_metrics[HELM_FAILED]:-0}"
+                local pods_completed="${current_metrics[PODS_COMPLETED]:-0}"
+                local pods_unaccounted="${current_metrics[PODS_UNACCOUNTED]:-0}"
+
+                # Nodes NotReady - CRITICAL if > 0
+                if [[ "${nodes_notready}" -gt 0 ]]; then
+                    printf "Nodes NotReady: %-6s ${RED}[CRITICAL]${NC}\n" "${nodes_notready}"
+                else
+                    printf "Nodes NotReady: %-6s ${GREEN}[OK]${NC}\n" "${nodes_notready}"
+                fi
+
+                # Pods CrashLoop - CRITICAL if > 0
+                if [[ "${pods_crashloop}" -gt 0 ]]; then
+                    printf "Pods CrashLoop: %-6s ${RED}[CRITICAL]${NC}\n" "${pods_crashloop}"
+                else
+                    printf "Pods CrashLoop: %-6s ${GREEN}[OK]${NC}\n" "${pods_crashloop}"
+                fi
+
+                # Pods Pending - WARNING if > 0
+                if [[ "${pods_pending}" -gt 0 ]]; then
+                    printf "Pods Pending: %-6s ${YELLOW}[WARNING]${NC}\n" "${pods_pending}"
+                else
+                    printf "Pods Pending: %-6s ${GREEN}[OK]${NC}\n" "${pods_pending}"
+                fi
+
+                # Deployments NotReady - WARNING if > 0
+                if [[ "${deploys_notready}" -gt 0 ]]; then
+                    printf "Deploys NotReady: %-6s ${YELLOW}[WARNING]${NC}\n" "${deploys_notready}"
+                else
+                    printf "Deploys NotReady: %-6s ${GREEN}[OK]${NC}\n" "${deploys_notready}"
+                fi
+
+                # DaemonSets NotReady - WARNING if > 0
+                if [[ "${ds_notready}" -gt 0 ]]; then
+                    printf "DS NotReady: %-6s ${YELLOW}[WARNING]${NC}\n" "${ds_notready}"
+                else
+                    printf "DS NotReady: %-6s ${GREEN}[OK]${NC}\n" "${ds_notready}"
+                fi
+
+                # StatefulSets NotReady - WARNING if > 0
+                if [[ "${sts_notready}" -gt 0 ]]; then
+                    printf "STS NotReady: %-6s ${YELLOW}[WARNING]${NC}\n" "${sts_notready}"
+                else
+                    printf "STS NotReady: %-6s ${GREEN}[OK]${NC}\n" "${sts_notready}"
+                fi
+
+                # PVCs NotBound - WARNING if > 0
+                if [[ "${pvc_notbound}" -gt 0 ]]; then
+                    printf "PVCs NotBound: %-6s ${YELLOW}[WARNING]${NC}\n" "${pvc_notbound}"
+                else
+                    printf "PVCs NotBound: %-6s ${GREEN}[OK]${NC}\n" "${pvc_notbound}"
+                fi
+
+                # Helm Failed - WARNING if > 0
+                if [[ "${helm_failed}" -gt 0 ]]; then
+                    printf "Helm Failed: %-6s ${YELLOW}[WARNING]${NC}\n" "${helm_failed}"
+                else
+                    printf "Helm Failed: %-6s ${GREEN}[OK]${NC}\n" "${helm_failed}"
+                fi
+
+                # Pods Completed - INFO (not a problem)
+                printf "Pods Completed: %-6s ${CYAN}[INFO]${NC}\n" "${pods_completed}"
+
+                # Pods Unaccounted - WARNING if > 0
+                if [[ "${pods_unaccounted}" -gt 0 ]]; then
+                    printf "Pods Unaccounted: %-6s ${YELLOW}[WARNING]${NC}\n" "${pods_unaccounted}"
+                else
+                    printf "Pods Unaccounted: %-6s ${GREEN}[OK]${NC}\n" "${pods_unaccounted}"
+                fi
+
+                echo ""
+                echo "=================================================================================="
+                if [[ "${current_health_status}" == "CRITICAL" ]]; then
+                    echo -e "CLUSTER HEALTH: ${RED}${current_health_status}${NC}"
+                elif [[ "${current_health_status}" == "WARNINGS" ]]; then
+                    echo -e "CLUSTER HEALTH: ${YELLOW}${current_health_status}${NC}"
+                else
+                    echo -e "CLUSTER HEALTH: ${GREEN}${current_health_status}${NC}"
+                fi
+                echo "  Critical Issues: ${current_critical}"
+                echo "  Warnings: ${current_warnings}"
+                echo "=================================================================================="
+                echo ""
+
+                # Store summary for later use
+                cluster_summaries+=("CLUSTER: ${current_cluster}")
+            else
+                failed_count=$((failed_count + 1))
+                failed_clusters+=("${current_cluster}")
+                local error_msg="${current_metrics[ERROR]:-Unknown error}"
+                echo -e "${RED}[FAILED]${NC} ${current_cluster}: ${error_msg}"
+            fi
+            continue
+        fi
+
+        if [[ "${in_block}" == "true" ]]; then
+            local key="${line%%:*}"
+            local value="${line#*:}"
+            current_metrics["${key}"]="${value}"
         fi
     done < "${results_file}"
 
     # Cleanup temp file
     rm -f "${results_file}"
+
+    # Store processed clusters for POST mode comparison display
+    PARALLEL_PROCESSED_CLUSTERS=("${processed_clusters[@]}")
 
     # Return values via global variables
     PARALLEL_SUCCESS_COUNT=${success_count}
@@ -579,6 +762,19 @@ run_health_checks() {
         failed_count=${PARALLEL_FAILED_COUNT}
         failed_clusters=("${PARALLEL_FAILED_CLUSTERS[@]}")
         cluster_summaries=("${PARALLEL_CLUSTER_SUMMARIES[@]}")
+
+        # POST mode: Display comparison reports for each cluster
+        if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
+            echo ""
+            print_section "PRE vs POST Comparison"
+
+            for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
+                local comparison_file="${output_base_dir}/${cluster_name}/comparison-report.txt"
+                if [[ -f "${comparison_file}" ]]; then
+                    display_comparison_summary "${comparison_file}" "${cluster_name}"
+                fi
+            done
+        fi
     else
         # Sequential execution (original behavior)
         local current=0
@@ -606,32 +802,45 @@ run_health_checks() {
     # Cleanup cache
     cleanup_cluster_cache
 
-    # Display summary
-    echo ""
-    print_section "Execution Summary"
-    echo -e "${CYAN}Total clusters processed: ${NC}${cluster_count}"
-    echo -e "${GREEN}Successful: ${NC}${success_count}"
-
-    if [ ${failed_count} -gt 0 ]; then
-        echo -e "${RED}Failed: ${NC}${failed_count}"
+    # For parallel mode, detailed summaries are already displayed per cluster above
+    # For sequential mode, show detailed execution summary
+    if [[ "${parallel}" != "true" ]]; then
+        # Display detailed summary for sequential mode
         echo ""
-        echo -e "${RED}Failed clusters:${NC}"
-        for failed_cluster in "${failed_clusters[@]}"; do
-            echo "  - ${failed_cluster}"
-        done
+        print_section "Execution Summary"
+        echo -e "${CYAN}Total clusters processed: ${NC}${cluster_count}"
+        echo -e "${GREEN}Successful: ${NC}${success_count}"
+
+        if [ ${failed_count} -gt 0 ]; then
+            echo -e "${RED}Failed: ${NC}${failed_count}"
+            echo ""
+            echo -e "${RED}Failed clusters:${NC}"
+            for failed_cluster in "${failed_clusters[@]}"; do
+                echo "  - ${failed_cluster}"
+            done
+        fi
+
+        # Display all cluster summaries
+        if [ ${#cluster_summaries[@]} -gt 0 ]; then
+            echo ""
+            print_section "Cluster Health Summaries"
+            for summary in "${cluster_summaries[@]}"; do
+                echo -e "${CYAN}${summary}${NC}"
+            done
+        fi
+    else
+        # Simplified summary for parallel mode (detailed output already shown)
+        if [ ${failed_count} -gt 0 ]; then
+            echo ""
+            echo -e "${RED}Failed clusters (${failed_count}):${NC}"
+            for failed_cluster in "${failed_clusters[@]}"; do
+                echo "  - ${failed_cluster}"
+            done
+        fi
     fi
 
     echo ""
     echo -e "${CYAN}Results directory: ${NC}${output_base_dir}"
-
-    # Display all cluster summaries
-    if [ ${#cluster_summaries[@]} -gt 0 ]; then
-        echo ""
-        print_section "Cluster Health Summaries"
-        for summary in "${cluster_summaries[@]}"; do
-            echo -e "${CYAN}${summary}${NC}"
-        done
-    fi
 
     # PRE mode: Update "latest" directory
     if [[ "${mode}" == "pre" ]]; then
