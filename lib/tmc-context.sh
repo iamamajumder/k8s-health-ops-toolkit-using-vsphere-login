@@ -19,6 +19,59 @@ declare -A CONTEXT_SETUP_DONE 2>/dev/null || CONTEXT_SETUP_DONE=""
 PROD_CONTEXT_READY=""
 NONPROD_CONTEXT_READY=""
 
+# Track if credentials have been prompted in this session
+TMC_CREDENTIALS_PROMPTED=""
+
+#===============================================================================
+# Prompt for TMC credentials if not set
+#===============================================================================
+
+prompt_tmc_credentials() {
+    # Skip if already prompted or credentials are set
+    if [[ -n "${TMC_CREDENTIALS_PROMPTED}" ]]; then
+        return 0
+    fi
+
+    # Check if credentials are already set via environment variables
+    if [[ -n "${TMC_SELF_MANAGED_USERNAME:-}" ]] && [[ -n "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
+        TMC_CREDENTIALS_PROMPTED="true"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${YELLOW}TMC credentials required${NC}"
+    echo "Credentials will be used for TMC context authentication."
+    echo ""
+
+    # Prompt for username if not provided
+    if [[ -z "${TMC_SELF_MANAGED_USERNAME:-}" ]]; then
+        echo -n "Enter TMC username (AO account): "
+        read -r TMC_SELF_MANAGED_USERNAME </dev/tty
+        if [[ -z "${TMC_SELF_MANAGED_USERNAME}" ]]; then
+            error "Username cannot be empty"
+            return 1
+        fi
+        export TMC_SELF_MANAGED_USERNAME
+    fi
+
+    # Prompt for password if not provided
+    if [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
+        echo -n "Enter TMC password: "
+        read -r -s TMC_SELF_MANAGED_PASSWORD </dev/tty
+        echo ""
+        if [[ -z "${TMC_SELF_MANAGED_PASSWORD}" ]]; then
+            error "Password cannot be empty"
+            return 1
+        fi
+        export TMC_SELF_MANAGED_PASSWORD
+    fi
+
+    TMC_CREDENTIALS_PROMPTED="true"
+    success "TMC credentials configured"
+    echo ""
+    return 0
+}
+
 # Initialize context cache directory
 init_context_cache() {
     if [[ ! -d "${CONTEXT_CACHE_DIR}" ]]; then
@@ -209,34 +262,14 @@ ensure_tmc_context() {
     progress "Creating TMC context '${context_name}' for ${environment} environment"
     progress "Endpoint: ${endpoint}"
 
-    # Get credentials from environment variables or prompt
-    local username="${TMC_SELF_MANAGED_USERNAME:-}"
-    local password="${TMC_SELF_MANAGED_PASSWORD:-}"
-
-    # Prompt for username if not provided
-    if [[ -z "${username}" ]]; then
-        echo -n "Enter TMC username (AO account): "
-        read -r username </dev/tty
-        if [[ -z "${username}" ]]; then
-            error "Username cannot be empty"
-            return 1
-        fi
+    # Prompt for credentials if not set (only prompts once per session)
+    if ! prompt_tmc_credentials; then
+        return 1
     fi
 
-    # Prompt for password if not provided
-    if [[ -z "${password}" ]]; then
-        echo -n "Enter TMC password: "
-        read -r -s password </dev/tty
-        echo ""
-        if [[ -z "${password}" ]]; then
-            error "Password cannot be empty"
-            return 1
-        fi
-    fi
-
-    # Create context
-    if TMC_SELF_MANAGED_USERNAME="${username}" \
-       TMC_SELF_MANAGED_PASSWORD="${password}" \
+    # Create context using exported credentials
+    if TMC_SELF_MANAGED_USERNAME="${TMC_SELF_MANAGED_USERNAME}" \
+       TMC_SELF_MANAGED_PASSWORD="${TMC_SELF_MANAGED_PASSWORD}" \
        tanzu tmc context create "${context_name}" \
            --endpoint "${endpoint}" \
            -i pinniped \
@@ -311,6 +344,7 @@ export -f get_tmc_context_name
 export -f get_tmc_endpoint
 export -f context_exists
 export -f ensure_tanzu
+export -f prompt_tmc_credentials
 export -f ensure_tmc_context
 export -f recreate_tmc_context
 export -f verify_tmc_context

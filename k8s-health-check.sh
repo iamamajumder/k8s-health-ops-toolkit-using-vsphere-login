@@ -396,6 +396,12 @@ process_cluster_parallel() {
 prepare_tmc_contexts() {
     local config_file="$1"
 
+    # Prompt for TMC credentials if not set (only prompts once)
+    if ! prompt_tmc_credentials; then
+        error "TMC credentials are required"
+        return 1
+    fi
+
     progress "Preparing TMC contexts for all clusters..."
 
     local cluster_list=$(get_cluster_list "${config_file}")

@@ -449,6 +449,12 @@ run_ops_command() {
     fi
     echo ""
 
+    # Prompt for TMC credentials if not set (only prompts once)
+    if ! prompt_tmc_credentials; then
+        error "TMC credentials are required"
+        exit 1
+    fi
+
     # Execute commands
     # Use known path instead of capturing output (which would include progress messages)
     local results_file="${results_dir}/raw_results.txt"
