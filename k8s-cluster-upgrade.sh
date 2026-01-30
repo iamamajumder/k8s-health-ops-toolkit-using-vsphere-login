@@ -704,17 +704,16 @@ upgrade_cluster_parallel() {
 
         case "${HEALTH_STATUS}" in
             "HEALTHY")
-                # Proceed
+                # Proceed with upgrade
                 ;;
             "WARNINGS")
-                if [ "${FORCE_UPGRADE}" = false ] && [ "${DRY_RUN}" = false ]; then
-                    # In parallel mode, we can't prompt - skip if not --force
-                    echo "CLUSTER:${cluster_name}|STATUS:SKIPPED|REASON:Cluster has warnings (use --force to override)" >> "${results_file}"
-                    return 2
-                fi
+                # In parallel mode, we can't prompt - proceed with warnings but log it
+                # (Use --skip-health-check to disable, or run in sequential mode for prompting)
+                echo "[WARNING] ${cluster_name}: Proceeding with upgrade despite ${HEALTH_WARNING_COUNT:-0} warning(s)" >&2
                 ;;
             "CRITICAL")
-                echo "CLUSTER:${cluster_name}|STATUS:SKIPPED|REASON:Cluster has CRITICAL issues" >> "${results_file}"
+                # CRITICAL issues - skip the upgrade
+                echo "CLUSTER:${cluster_name}|STATUS:SKIPPED|REASON:Cluster has CRITICAL issues (${HEALTH_CRITICAL_COUNT:-0} critical)" >> "${results_file}"
                 return 2
                 ;;
         esac

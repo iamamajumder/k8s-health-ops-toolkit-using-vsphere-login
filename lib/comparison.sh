@@ -657,6 +657,47 @@ display_comparison_summary() {
     worse_count=${worse_count:-0}
     better_count=${better_count:-0}
 
+    # Display PRE vs POST metrics table from the comparison file
+    echo "--- PRE vs POST METRICS ---"
+    echo ""
+
+    # Extract and display the metrics table from the comparison report
+    local in_table=false
+    local table_found=false
+    while IFS= read -r line; do
+        # Start capturing after the PRE vs POST header
+        if [[ "${line}" == *"PRE vs POST COMPARISON"* ]]; then
+            in_table=true
+            table_found=true
+            continue
+        fi
+        # Stop at the next section (PLAIN ENGLISH SUMMARY or other headers)
+        if [[ "${in_table}" == "true" ]] && [[ "${line}" == "####"* ]]; then
+            in_table=false
+            break
+        fi
+        # Print table lines
+        if [[ "${in_table}" == "true" ]] && [[ -n "${line}" ]]; then
+            # Color code based on status
+            if [[ "${line}" == *"[WORSE]"* ]]; then
+                echo -e "  ${RED}${line}${NC}"
+            elif [[ "${line}" == *"[BETTER]"* ]]; then
+                echo -e "  ${GREEN}${line}${NC}"
+            elif [[ "${line}" == *"[CHANGED]"* ]]; then
+                echo -e "  ${YELLOW}${line}${NC}"
+            elif [[ "${line}" == "Metric"* ]] || [[ "${line}" == "---"* ]]; then
+                echo -e "  ${CYAN}${line}${NC}"
+            else
+                echo "  ${line}"
+            fi
+        fi
+    done < "${diff_file}"
+
+    if [[ "${table_found}" == "false" ]]; then
+        echo "  (Metrics table not found in comparison report)"
+    fi
+    echo ""
+
     echo "--- STATUS OVERVIEW ---"
     echo ""
 
@@ -682,25 +723,32 @@ display_comparison_summary() {
 
     echo ""
 
-    # Show critical items if any
-    if [ "$critical_count" -gt 0 ]; then
-        echo "--- CRITICAL ITEMS ---"
-        echo ""
-        grep "\[CRITICAL\]" "${diff_file}" 2>/dev/null | head -10 | while read -r line; do
+    # Show plain English summary from the report
+    echo "--- CHANGE SUMMARY ---"
+    echo ""
+    local in_summary=false
+    while IFS= read -r line; do
+        if [[ "${line}" == *"PLAIN ENGLISH SUMMARY"* ]]; then
+            in_summary=true
+            continue
+        fi
+        if [[ "${in_summary}" == "true" ]] && [[ "${line}" == "####"* ]]; then
+            in_summary=false
+            break
+        fi
+        if [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"CRITICAL:"* ]]; then
             echo -e "  ${RED}${line}${NC}"
-        done
-        echo ""
-    fi
-
-    # Show what worsened if any
-    if [ "$worse_count" -gt 0 ]; then
-        echo "--- ITEMS THAT WORSENED ---"
-        echo ""
-        grep "\[WORSE\]" "${diff_file}" 2>/dev/null | head -10 | while read -r line; do
+        elif [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"WARNING:"* ]]; then
             echo -e "  ${YELLOW}${line}${NC}"
-        done
-        echo ""
-    fi
+        elif [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"IMPROVED:"* ]]; then
+            echo -e "  ${GREEN}${line}${NC}"
+        elif [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"INFO:"* ]]; then
+            echo -e "  ${CYAN}${line}${NC}"
+        elif [[ "${in_summary}" == "true" ]] && [[ -n "${line}" ]] && [[ "${line}" != "What changed"* ]]; then
+            echo "  ${line}"
+        fi
+    done < "${diff_file}"
+    echo ""
 
     # Overall status
     echo "--- OVERALL STATUS ---"
