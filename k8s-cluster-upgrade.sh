@@ -134,6 +134,114 @@ EOF
 }
 
 #===============================================================================
+# Display Health Summary on CLI
+#===============================================================================
+
+display_health_summary_cli() {
+    local cluster_name="$1"
+    local mode="$2"  # "PRE" or "POST"
+
+    echo ""
+    echo -e "${CYAN}--- ${mode} Health Check Summary: ${cluster_name} ---${NC}"
+    echo ""
+    echo "--- Resource Counts ---"
+    echo ""
+    echo "Nodes Total: ${HEALTH_NODES_TOTAL:-0}"
+    echo "Nodes Ready: ${HEALTH_NODES_READY:-0}"
+    echo "Pods Total: ${HEALTH_PODS_TOTAL:-0}"
+    echo "Pods Running: ${HEALTH_PODS_RUNNING:-0}"
+    echo "Pods Not Running: $((${HEALTH_PODS_TOTAL:-0} - ${HEALTH_PODS_RUNNING:-0}))"
+    echo "Deployments Total: ${HEALTH_DEPLOYS_TOTAL:-0}"
+    echo "DaemonSets Total: ${HEALTH_DS_TOTAL:-0}"
+    echo "StatefulSets Total: ${HEALTH_STS_TOTAL:-0}"
+    echo "PVCs Total: ${HEALTH_PVC_TOTAL:-0}"
+    echo "Helm Releases: ${HEALTH_HELM_TOTAL:-0}"
+    echo ""
+    echo "--- Health Indicators ---"
+    echo ""
+
+    # Nodes NotReady
+    if [[ "${HEALTH_NODES_NOTREADY:-0}" -gt 0 ]]; then
+        printf "Nodes NotReady: %-6s ${RED}[CRITICAL]${NC}\n" "${HEALTH_NODES_NOTREADY:-0}"
+    else
+        printf "Nodes NotReady: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_NODES_NOTREADY:-0}"
+    fi
+
+    # Pods CrashLoop
+    if [[ "${HEALTH_PODS_CRASHLOOP:-0}" -gt 0 ]]; then
+        printf "Pods CrashLoop: %-6s ${RED}[CRITICAL]${NC}\n" "${HEALTH_PODS_CRASHLOOP:-0}"
+    else
+        printf "Pods CrashLoop: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_PODS_CRASHLOOP:-0}"
+    fi
+
+    # Pods Pending
+    if [[ "${HEALTH_PODS_PENDING:-0}" -gt 0 ]]; then
+        printf "Pods Pending: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_PODS_PENDING:-0}"
+    else
+        printf "Pods Pending: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_PODS_PENDING:-0}"
+    fi
+
+    # Deployments NotReady
+    if [[ "${HEALTH_DEPLOYS_NOTREADY:-0}" -gt 0 ]]; then
+        printf "Deploys NotReady: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_DEPLOYS_NOTREADY:-0}"
+    else
+        printf "Deploys NotReady: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_DEPLOYS_NOTREADY:-0}"
+    fi
+
+    # DaemonSets NotReady
+    if [[ "${HEALTH_DS_NOTREADY:-0}" -gt 0 ]]; then
+        printf "DS NotReady: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_DS_NOTREADY:-0}"
+    else
+        printf "DS NotReady: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_DS_NOTREADY:-0}"
+    fi
+
+    # StatefulSets NotReady
+    if [[ "${HEALTH_STS_NOTREADY:-0}" -gt 0 ]]; then
+        printf "STS NotReady: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_STS_NOTREADY:-0}"
+    else
+        printf "STS NotReady: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_STS_NOTREADY:-0}"
+    fi
+
+    # PVCs NotBound
+    if [[ "${HEALTH_PVC_NOTBOUND:-0}" -gt 0 ]]; then
+        printf "PVCs NotBound: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_PVC_NOTBOUND:-0}"
+    else
+        printf "PVCs NotBound: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_PVC_NOTBOUND:-0}"
+    fi
+
+    # Helm Failed
+    if [[ "${HEALTH_HELM_FAILED:-0}" -gt 0 ]]; then
+        printf "Helm Failed: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_HELM_FAILED:-0}"
+    else
+        printf "Helm Failed: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_HELM_FAILED:-0}"
+    fi
+
+    # Pods Completed
+    printf "Pods Completed: %-6s ${CYAN}[INFO]${NC}\n" "${HEALTH_PODS_COMPLETED:-0}"
+
+    # Pods Unaccounted
+    if [[ "${HEALTH_PODS_UNACCOUNTED:-0}" -gt 0 ]]; then
+        printf "Pods Unaccounted: %-6s ${YELLOW}[WARNING]${NC}\n" "${HEALTH_PODS_UNACCOUNTED:-0}"
+    else
+        printf "Pods Unaccounted: %-6s ${GREEN}[OK]${NC}\n" "${HEALTH_PODS_UNACCOUNTED:-0}"
+    fi
+
+    echo ""
+    echo "=================================================================================="
+    if [[ "${HEALTH_STATUS}" == "CRITICAL" ]]; then
+        echo -e "CLUSTER HEALTH: ${RED}${HEALTH_STATUS}${NC}"
+    elif [[ "${HEALTH_STATUS}" == "WARNINGS" ]]; then
+        echo -e "CLUSTER HEALTH: ${YELLOW}${HEALTH_STATUS}${NC}"
+    else
+        echo -e "CLUSTER HEALTH: ${GREEN}${HEALTH_STATUS}${NC}"
+    fi
+    echo "  Critical Issues: ${HEALTH_CRITICAL_COUNT:-0}"
+    echo "  Warnings: ${HEALTH_WARNING_COUNT:-0}"
+    echo "=================================================================================="
+    echo ""
+}
+
+#===============================================================================
 # Pre-Upgrade Health Validation
 #===============================================================================
 
@@ -147,6 +255,9 @@ validate_pre_upgrade_health() {
     collect_health_metrics
     calculate_health_status
 
+    # Display health summary on CLI
+    display_health_summary_cli "${cluster_name}" "PRE-Upgrade"
+
     # Save PRE-upgrade health report
     local pre_report="${output_dir}/pre-upgrade-health.txt"
     {
@@ -156,7 +267,35 @@ validate_pre_upgrade_health() {
         echo "Cluster: ${cluster_name}"
         echo "Timestamp: $(get_formatted_timestamp)"
         echo ""
-        generate_health_summary "${cluster_name}"
+        echo "--- Resource Counts ---"
+        echo ""
+        echo "Nodes Total: ${HEALTH_NODES_TOTAL:-0}"
+        echo "Nodes Ready: ${HEALTH_NODES_READY:-0}"
+        echo "Pods Total: ${HEALTH_PODS_TOTAL:-0}"
+        echo "Pods Running: ${HEALTH_PODS_RUNNING:-0}"
+        echo "Pods Not Running: $((${HEALTH_PODS_TOTAL:-0} - ${HEALTH_PODS_RUNNING:-0}))"
+        echo "Deployments Total: ${HEALTH_DEPLOYS_TOTAL:-0}"
+        echo "DaemonSets Total: ${HEALTH_DS_TOTAL:-0}"
+        echo "StatefulSets Total: ${HEALTH_STS_TOTAL:-0}"
+        echo "PVCs Total: ${HEALTH_PVC_TOTAL:-0}"
+        echo "Helm Releases: ${HEALTH_HELM_TOTAL:-0}"
+        echo ""
+        echo "--- Health Indicators ---"
+        echo ""
+        echo "Nodes NotReady: ${HEALTH_NODES_NOTREADY:-0}"
+        echo "Pods CrashLoop: ${HEALTH_PODS_CRASHLOOP:-0}"
+        echo "Pods Pending: ${HEALTH_PODS_PENDING:-0}"
+        echo "Deploys NotReady: ${HEALTH_DEPLOYS_NOTREADY:-0}"
+        echo "DS NotReady: ${HEALTH_DS_NOTREADY:-0}"
+        echo "STS NotReady: ${HEALTH_STS_NOTREADY:-0}"
+        echo "PVCs NotBound: ${HEALTH_PVC_NOTBOUND:-0}"
+        echo "Helm Failed: ${HEALTH_HELM_FAILED:-0}"
+        echo "Pods Completed: ${HEALTH_PODS_COMPLETED:-0}"
+        echo "Pods Unaccounted: ${HEALTH_PODS_UNACCOUNTED:-0}"
+        echo ""
+        echo "CLUSTER HEALTH: ${HEALTH_STATUS}"
+        echo "  Critical Issues: ${HEALTH_CRITICAL_COUNT:-0}"
+        echo "  Warnings: ${HEALTH_WARNING_COUNT:-0}"
     } > "${pre_report}"
 
     # Return status code based on health
@@ -327,6 +466,9 @@ validate_post_upgrade_health() {
     collect_health_metrics
     calculate_health_status
 
+    # Display health summary on CLI
+    display_health_summary_cli "${cluster_name}" "POST-Upgrade"
+
     # Save POST-upgrade health report
     local post_report="${output_dir}/post-upgrade-health.txt"
     {
@@ -336,7 +478,35 @@ validate_post_upgrade_health() {
         echo "Cluster: ${cluster_name}"
         echo "Timestamp: $(get_formatted_timestamp)"
         echo ""
-        generate_health_summary "${cluster_name}"
+        echo "--- Resource Counts ---"
+        echo ""
+        echo "Nodes Total: ${HEALTH_NODES_TOTAL:-0}"
+        echo "Nodes Ready: ${HEALTH_NODES_READY:-0}"
+        echo "Pods Total: ${HEALTH_PODS_TOTAL:-0}"
+        echo "Pods Running: ${HEALTH_PODS_RUNNING:-0}"
+        echo "Pods Not Running: $((${HEALTH_PODS_TOTAL:-0} - ${HEALTH_PODS_RUNNING:-0}))"
+        echo "Deployments Total: ${HEALTH_DEPLOYS_TOTAL:-0}"
+        echo "DaemonSets Total: ${HEALTH_DS_TOTAL:-0}"
+        echo "StatefulSets Total: ${HEALTH_STS_TOTAL:-0}"
+        echo "PVCs Total: ${HEALTH_PVC_TOTAL:-0}"
+        echo "Helm Releases: ${HEALTH_HELM_TOTAL:-0}"
+        echo ""
+        echo "--- Health Indicators ---"
+        echo ""
+        echo "Nodes NotReady: ${HEALTH_NODES_NOTREADY:-0}"
+        echo "Pods CrashLoop: ${HEALTH_PODS_CRASHLOOP:-0}"
+        echo "Pods Pending: ${HEALTH_PODS_PENDING:-0}"
+        echo "Deploys NotReady: ${HEALTH_DEPLOYS_NOTREADY:-0}"
+        echo "DS NotReady: ${HEALTH_DS_NOTREADY:-0}"
+        echo "STS NotReady: ${HEALTH_STS_NOTREADY:-0}"
+        echo "PVCs NotBound: ${HEALTH_PVC_NOTBOUND:-0}"
+        echo "Helm Failed: ${HEALTH_HELM_FAILED:-0}"
+        echo "Pods Completed: ${HEALTH_PODS_COMPLETED:-0}"
+        echo "Pods Unaccounted: ${HEALTH_PODS_UNACCOUNTED:-0}"
+        echo ""
+        echo "CLUSTER HEALTH: ${HEALTH_STATUS}"
+        echo "  Critical Issues: ${HEALTH_CRITICAL_COUNT:-0}"
+        echo "  Warnings: ${HEALTH_WARNING_COUNT:-0}"
     } > "${post_report}"
 
     # Generate comparison report

@@ -344,7 +344,8 @@ process_cluster_parallel() {
             local pre_report="${pre_cluster_dir}/health-check-report.txt"
             if [[ -f "${pre_report}" ]]; then
                 local comparison_file="${cluster_output_dir}/comparison-report.txt"
-                generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}" >/dev/null 2>&1
+                # Generate comparison report (stdout/stderr suppressed but file still created)
+                generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}" 2>/dev/null
             fi
         fi
     fi
@@ -774,12 +775,29 @@ run_health_checks() {
             echo ""
             print_section "PRE vs POST Comparison"
 
+            local comparison_found=false
             for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
                 local comparison_file="${output_base_dir}/${cluster_name}/comparison-report.txt"
-                if [[ -f "${comparison_file}" ]]; then
+                if [[ -f "${comparison_file}" ]] && [[ -s "${comparison_file}" ]]; then
                     display_comparison_summary "${comparison_file}" "${cluster_name}"
+                    comparison_found=true
+                else
+                    # Debug: show why comparison isn't displayed
+                    local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
+                    local pre_report="${pre_cluster_dir}/health-check-report.txt"
+                    if [[ ! -d "${pre_cluster_dir}" ]]; then
+                        warning "No PRE results directory found for ${cluster_name}: ${pre_cluster_dir}"
+                    elif [[ ! -f "${pre_report}" ]]; then
+                        warning "No PRE health report found for ${cluster_name}: ${pre_report}"
+                    elif [[ ! -f "${comparison_file}" ]]; then
+                        warning "Comparison report not generated for ${cluster_name}"
+                    fi
                 fi
             done
+
+            if [[ "${comparison_found}" == "false" ]] && [[ ${#PARALLEL_PROCESSED_CLUSTERS[@]} -eq 0 ]]; then
+                warning "No clusters were processed successfully for comparison"
+            fi
         fi
     else
         # Sequential execution (original behavior)
