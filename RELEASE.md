@@ -93,6 +93,86 @@ All caching now uses consistent 12-hour expiry for fresh data during operations.
 | `lib/tmc.sh` | METADATA_CACHE_EXPIRY: 604800 → 43200 (line 25) |
 | `k8s-cluster-upgrade.sh` | Complete rewrite (1200 → 350 lines) |
 
+### Management Cluster Discovery for Multi-Cluster Operations
+
+Added `-m <environment>` flag to `k8s-ops-cmd.sh` for dynamic cluster discovery.
+
+**Key Features:**
+- **Dynamic cluster discovery**: Query TMC to discover all clusters in a management cluster
+- **No clusters.conf needed**: Eliminates manual cluster list maintenance
+- **Environment-based selection**: Use simple identifiers like `prod-1`, `uat-2`, `system-3`
+- **Intelligent pattern matching**: Automatically matches environment to management cluster (postfix match)
+- **Full integration**: Works with all existing flags (`--sequential`, `--batch-size`, `--timeout`, etc.)
+- **Caching**: Discovered clusters cached for 12 hours (consistent with v3.5 cache standardization)
+
+**Usage:**
+```bash
+# Execute command on all clusters in prod-1 management cluster
+./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes --no-headers | wc -l"
+
+# Discovery with sequential execution
+./k8s-ops-cmd.sh -m uat-2 --sequential "kubectl version --short"
+
+# Custom batch size with discovery
+./k8s-ops-cmd.sh -m prod-1 --batch-size 10 "kubectl get pods -A"
+
+# Discovery with custom timeout
+./k8s-ops-cmd.sh -m system-3 --timeout 60 "helm list -A"
+```
+
+**Supported Environments:**
+| Environment | Description | TMC Context |
+|-------------|-------------|-------------|
+| prod-1, prod-2, prod-3, prod-4 | Production | tmc-sm-prod |
+| uat-2, uat-4 | UAT | tmc-sm-nonprod |
+| system-1, system-3 | System | tmc-sm-nonprod |
+
+**How it works:**
+1. Queries TMC management clusters: `tanzu tmc management-cluster list -o json`
+2. Matches environment to management cluster using postfix pattern (e.g., `*-prod-1`)
+3. Discovers clusters: `tanzu tmc cluster list -m <mgmt-cluster> -o json`
+4. Caches results for 12 hours
+5. Executes command on all discovered clusters using existing parallel/sequential logic
+
+**New Library Functions:**
+
+| Function | Location | Purpose |
+|----------|----------|---------|
+| `discover_management_clusters()` | lib/tmc.sh | Query and cache all TMC management clusters |
+| `get_management_cluster_for_environment()` | lib/tmc.sh | Match environment string to management cluster |
+| `discover_clusters_by_management()` | lib/tmc.sh | List all clusters in a management cluster |
+| `determine_environment_from_flag()` | lib/tmc-context.sh | Extract environment type from flag |
+| `ensure_tmc_context_for_environment()` | lib/tmc-context.sh | Create/reuse TMC context for environment |
+| `get_cluster_list_from_management()` | lib/config.sh | Orchestrate discovery and return cluster list |
+| `validate_management_environment()` | lib/config.sh | Validate environment format |
+| `count_clusters_from_list()` | lib/config.sh | Count clusters from list string |
+
+**Cache Files:**
+- `~/.k8s-health-check/management-clusters.cache` - Management cluster list (12-hour expiry)
+- `~/.k8s-health-check/mgmt-<mgmt-cluster>-clusters.cache` - Clusters per management cluster (12-hour expiry)
+
+**Benefits:**
+- **Always up-to-date**: No need to manually update clusters.conf when clusters are added/removed
+- **Ideal for dynamic environments**: Perfect for environments where clusters change frequently
+- **Backward compatible**: File-based mode (clusters.conf) still works unchanged
+- **Fast execution**: Cached discovery results minimize TMC API calls
+- **Flexible**: Works with all existing execution modes (parallel, sequential, custom batch sizes)
+
+**Error Handling:**
+- Management cluster not found → Shows available management clusters
+- No clusters found → Warning message (automation-friendly, exit 0)
+- TMC API failures → Clear error messages with troubleshooting suggestions
+- Invalid environment format → Shows expected format with examples
+
+**Files Modified:**
+| File | Change | Lines Added/Modified |
+|------|--------|---------------------|
+| `lib/tmc.sh` | Add 3 discovery functions | +150 lines |
+| `lib/tmc-context.sh` | Add 2 environment context functions | +80 lines |
+| `lib/config.sh` | Add 3 helper functions | +60 lines |
+| `k8s-ops-cmd.sh` | Add `-m` flag, modify orchestration | ~150 lines modified/added |
+| `README.md` | Document new feature | +80 lines |
+
 ### Breaking Changes
 
 **None** - All existing functionality preserved:

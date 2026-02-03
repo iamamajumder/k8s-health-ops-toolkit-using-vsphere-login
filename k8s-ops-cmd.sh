@@ -1,8 +1,10 @@
 #!/bin/bash
 #===============================================================================
-# Kubernetes Multi-Cluster Ops Command Script v3.4
+# Kubernetes Multi-Cluster Ops Command Script v3.5
 # Purpose: Execute the same command across all clusters in clusters.conf
+#          or dynamically discover clusters from TMC management cluster
 #          with proper TMC context/kubeconfig setup and parallel execution
+# v3.5: Added management cluster discovery via -m flag
 #===============================================================================
 
 set +e          # Disable exit-on-error
@@ -28,6 +30,7 @@ DEFAULT_TIMEOUT=30          # Default command timeout in seconds
 DEFAULT_CONFIG="./clusters.conf"
 OUTPUT_DIR="${SCRIPT_DIR}/ops-results"
 BATCH_SIZE=6                # Default batch size for parallel execution
+MANAGEMENT_ENV=""           # Environment parameter for -m flag
 
 #===============================================================================
 # Usage Function
@@ -35,13 +38,15 @@ BATCH_SIZE=6                # Default batch size for parallel execution
 
 show_usage() {
     cat << EOF
-Kubernetes Multi-Cluster Ops Command Script v3.4
+Kubernetes Multi-Cluster Ops Command Script v3.5
 
 Usage:
   $0 [OPTIONS] "<command>" [clusters.conf]
+  $0 -m <environment> [OPTIONS] "<command>"
 
 Description:
   Execute the same command across all clusters defined in clusters.conf.
+  Or dynamically discover clusters from a TMC management cluster.
   Commands run in parallel batches of 6 by default for faster execution.
 
 Arguments:
@@ -51,13 +56,16 @@ Arguments:
                     Default: ./clusters.conf
 
 Options:
-  -h, --help        Show this help message
-  --timeout <sec>   Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
-  --sequential      Run commands sequentially instead of parallel
-  --batch-size N    Number of clusters to process in parallel (default: 6)
-  --output-only     Minimal terminal output, save full results to file
+  -h, --help                       Show this help message
+  -m, --management-cluster <env>   Discover clusters from management cluster
+                                   Environment: prod-1, prod-2, uat-2, system-3
+                                   Mutually exclusive with clusters.conf
+  --timeout <sec>                  Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
+  --sequential                     Run commands sequentially instead of parallel
+  --batch-size N                   Number of clusters to process in parallel (default: 6)
+  --output-only                    Minimal terminal output, save full results to file
 
-Examples:
+Examples (File-based mode):
   # Get Contour version on all clusters (parallel by default)
   $0 "kubectl get deploy -n projectcontour contour -o jsonpath='{.spec.template.spec.containers[0].image}'"
 
@@ -78,6 +86,19 @@ Examples:
 
   # Sequential execution (one cluster at a time)
   $0 --sequential "kubectl get nodes"
+
+Examples (Management Discovery mode):
+  # Execute command on all clusters in prod-1 management cluster
+  $0 -m prod-1 "kubectl get nodes"
+
+  # Dry run with management discovery
+  $0 -m uat-2 "kubectl get pods -A"
+
+  # Management discovery with custom batch size
+  $0 -m prod-1 --batch-size 10 "kubectl get nodes"
+
+  # Management discovery with sequential execution
+  $0 -m system-3 --sequential "kubectl version --short"
 
 Environment Variables:
   TMC_SELF_MANAGED_USERNAME    TMC username (optional, will prompt if not set)
@@ -163,6 +184,90 @@ execute_on_cluster() {
     rm -rf "${temp_dir}"
 
     return ${exit_code}
+}
+
+#===============================================================================
+# Execution Functions for Discovery Mode
+#===============================================================================
+
+run_parallel_with_list() {
+    local command="$1"
+    local cluster_list="$2"
+    local timeout_sec="$3"
+    local results_dir="$4"
+    local batch_size="$5"
+
+    # Convert cluster list to array
+    local clusters=()
+    while IFS= read -r cluster; do
+        clusters+=("${cluster}")
+    done <<< "${cluster_list}"
+
+    local results_file="${results_dir}/raw_results.txt"
+    > "${results_file}"
+
+    local total_clusters=${#clusters[@]}
+    local num_batches=$(( (total_clusters + batch_size - 1) / batch_size ))
+    local global_idx=0
+
+    progress "Processing ${total_clusters} clusters in batches of ${batch_size} (${num_batches} batch(es))..."
+    echo ""
+
+    for ((batch_num=1; batch_num<=num_batches; batch_num++)); do
+        local batch_start=$global_idx
+        local batch_end=$((batch_start + batch_size))
+        if [ $batch_end -gt $total_clusters ]; then
+            batch_end=$total_clusters
+        fi
+        local batch_count=$((batch_end - batch_start))
+
+        echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
+
+        declare -a pids=()
+
+        for ((i=batch_start; i<batch_end; i++)); do
+            local cluster="${clusters[$i]}"
+            local display_idx=$((i + 1))
+            echo -e "${MAGENTA}[${display_idx}/${total_clusters}]${NC} Launching: ${YELLOW}${cluster}${NC}"
+            execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}" &
+            pids+=($!)
+        done
+
+        # Wait for all processes in this batch
+        echo ""
+        progress "Waiting for batch ${batch_num} to complete..."
+        for pid in "${pids[@]}"; do
+            wait $pid 2>/dev/null
+        done
+
+        success "Batch ${batch_num} completed"
+        echo ""
+
+        global_idx=$batch_end
+    done
+}
+
+run_sequential_with_list() {
+    local command="$1"
+    local cluster_list="$2"
+    local timeout_sec="$3"
+    local results_dir="$4"
+
+    local results_file="${results_dir}/raw_results.txt"
+    > "${results_file}"
+
+    local total_clusters
+    total_clusters=$(count_clusters_from_list "${cluster_list}")
+
+    progress "Running commands on ${total_clusters} clusters sequentially..."
+
+    local idx=0
+    while IFS= read -r cluster; do
+        [[ -z "${cluster}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${MAGENTA}[${idx}/${total_clusters}]${NC} ${cluster}..."
+        execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}"
+    done <<< "${cluster_list}"
 }
 
 #===============================================================================
@@ -411,22 +516,59 @@ run_ops_command() {
     local parallel="$4"
     local output_only="$5"
     local batch_size="$6"
+    local mgmt_env="$7"
 
-    # Validate config file
-    if [[ ! -f "${config_file}" ]]; then
-        error "Configuration file not found: ${config_file}"
-        exit 1
-    fi
+    local cluster_list=""
+    local cluster_count=0
+    local source_description=""
 
-    # Load and validate configuration
-    if ! load_configuration "${config_file}"; then
-        exit 1
-    fi
+    # Management cluster discovery mode
+    if [[ -n "${mgmt_env}" ]]; then
+        # Validate environment format
+        if ! validate_management_environment "${mgmt_env}"; then
+            exit 1
+        fi
 
-    local cluster_count=$(count_clusters "${config_file}")
-    if [ "${cluster_count}" -eq 0 ]; then
-        error "No clusters found in configuration file"
-        exit 1
+        # Ensure TMC context for environment
+        if ! ensure_tmc_context_for_environment "${mgmt_env}"; then
+            error "Failed to create TMC context for environment: ${mgmt_env}"
+            exit 1
+        fi
+
+        # Discover clusters
+        progress "Discovering clusters from management cluster..."
+        cluster_list=$(get_cluster_list_from_management "${mgmt_env}")
+
+        if [[ -z "${cluster_list}" ]]; then
+            warning "No clusters found in management cluster for environment: ${mgmt_env}"
+            exit 0
+        fi
+
+        cluster_count=$(count_clusters_from_list "${cluster_list}")
+        source_description="Management Cluster (${mgmt_env})"
+
+    else
+        # File-based mode (existing logic)
+        # Validate config file
+        if [[ ! -f "${config_file}" ]]; then
+            error "Configuration file not found: ${config_file}"
+            exit 1
+        fi
+
+        # Load and validate configuration
+        if ! load_configuration "${config_file}"; then
+            exit 1
+        fi
+
+        cluster_list=$(get_cluster_list "${config_file}")
+        cluster_count=$(count_clusters "${config_file}")
+
+        if [ "${cluster_count}" -eq 0 ]; then
+            error "No clusters found in configuration file"
+            exit 1
+        fi
+
+        source_description="Config File (${config_file})"
     fi
 
     # Create output directory
@@ -440,6 +582,7 @@ run_ops_command() {
     echo ""
     print_section "Multi-Cluster Ops Command"
     display_info "Command" "${command}"
+    display_info "Source" "${source_description}"
     display_info "Clusters" "${cluster_count}"
     display_info "Timeout" "${timeout_sec}s"
     if [[ "${parallel}" == "true" ]]; then
@@ -453,13 +596,21 @@ run_ops_command() {
     # a new context needs to be created (existing valid contexts are reused)
 
     # Execute commands
-    # Use known path instead of capturing output (which would include progress messages)
-    local results_file="${results_dir}/raw_results.txt"
-
-    if [[ "${parallel}" == "true" ]]; then
-        run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}"
+    if [[ -n "${mgmt_env}" ]]; then
+        # Use list-based execution for management discovery mode
+        if [[ "${parallel}" == "true" ]]; then
+            run_parallel_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}" "${batch_size}"
+        else
+            run_sequential_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}"
+        fi
     else
-        run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}"
+        # Use file-based execution for config file mode
+        local results_file="${results_dir}/raw_results.txt"
+        if [[ "${parallel}" == "true" ]]; then
+            run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}"
+        else
+            run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}"
+        fi
     fi
 
     # Display and save results
@@ -501,6 +652,17 @@ parse_arguments() {
                 fi
                 shift
                 ;;
+            -m|--management-cluster)
+                shift
+                if [[ -n "$1" ]] && [[ ! "$1" =~ ^- ]]; then
+                    MANAGEMENT_ENV="$1"
+                else
+                    error "Environment required for -m/--management-cluster option"
+                    error "Format: prod-1, prod-2, uat-2, system-3"
+                    exit 1
+                fi
+                shift
+                ;;
             --sequential)
                 parallel="false"
                 shift
@@ -533,7 +695,12 @@ parse_arguments() {
                 if [[ -z "${command}" ]]; then
                     command="$1"
                 else
-                    config_file="$1"
+                    # Only accept config file if not using management discovery
+                    if [[ -z "${MANAGEMENT_ENV}" ]]; then
+                        config_file="$1"
+                    else
+                        warning "Ignoring config file argument when using -m flag: $1"
+                    fi
                 fi
                 shift
                 ;;
@@ -548,7 +715,7 @@ parse_arguments() {
     fi
 
     # Run the ops command
-    run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}" "${batch_size}"
+    run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}" "${batch_size}" "${MANAGEMENT_ENV}"
 }
 
 #===============================================================================

@@ -143,6 +143,62 @@ display_cluster_list() {
 }
 
 #===============================================================================
+# Management Cluster Discovery Functions (v3.5)
+#===============================================================================
+
+# Get cluster list from management cluster discovery
+get_cluster_list_from_management() {
+    local env_flag="$1"
+
+    # Get management cluster name
+    local mgmt_cluster
+    if ! mgmt_cluster=$(get_management_cluster_for_environment "${env_flag}"); then
+        return 1
+    fi
+
+    debug "Matched management cluster: ${mgmt_cluster}"
+
+    # Discover clusters
+    local cluster_data
+    if ! cluster_data=$(discover_clusters_by_management "${mgmt_cluster}"); then
+        return 1
+    fi
+
+    if [[ -z "${cluster_data}" ]]; then
+        return 0
+    fi
+
+    # Extract just cluster names (first field before |)
+    echo "${cluster_data}" | cut -d'|' -f1
+    return 0
+}
+
+# Validate environment format
+validate_management_environment() {
+    local env_flag="$1"
+
+    # Check format: alphanumeric + hyphens
+    if ! echo "${env_flag}" | grep -qE "^[a-zA-Z0-9-]+$"; then
+        error "Invalid environment format: ${env_flag}"
+        error "Expected format: prod-1, uat-2, system-3, etc."
+        return 1
+    fi
+
+    return 0
+}
+
+# Count clusters from a list string
+count_clusters_from_list() {
+    local cluster_list="$1"
+
+    if [[ -z "${cluster_list}" ]]; then
+        echo "0"
+    else
+        echo "${cluster_list}" | grep -c . || echo "0"
+    fi
+}
+
+#===============================================================================
 # Export Functions
 #===============================================================================
 
@@ -154,3 +210,6 @@ export -f load_configuration
 export -f display_configuration
 export -f count_clusters
 export -f display_cluster_list
+export -f get_cluster_list_from_management
+export -f validate_management_environment
+export -f count_clusters_from_list

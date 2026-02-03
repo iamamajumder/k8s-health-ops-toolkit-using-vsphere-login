@@ -338,6 +338,143 @@ cleanup_cluster_cache() {
 }
 
 #===============================================================================
+# Management Cluster Discovery Functions (v3.5)
+#===============================================================================
+
+# Discover all management clusters from TMC
+discover_management_clusters() {
+    init_cache_dir
+
+    # Check cache first
+    local cache_file="${CACHE_DIR}/management-clusters.cache"
+    if [[ -f "${cache_file}" ]]; then
+        local cache_timestamp=$(stat -c %Y "${cache_file}" 2>/dev/null || stat -f %m "${cache_file}" 2>/dev/null)
+        if is_cache_valid "${cache_timestamp}" "${METADATA_CACHE_EXPIRY}"; then
+            debug "Using cached management cluster list"
+            cat "${cache_file}"
+            return 0
+        fi
+    fi
+
+    # Query TMC
+    progress "Discovering management clusters from TMC..."
+    local tmc_output
+    if ! tmc_output=$(tanzu tmc management-cluster list -o json 2>&1); then
+        error "Failed to query TMC management clusters"
+        debug "TMC output: ${tmc_output}"
+        return 1
+    fi
+
+    # Parse JSON to extract management cluster names
+    local mgmt_clusters
+    mgmt_clusters=$(echo "${tmc_output}" | jq -r '.managementClusters[].fullName.name' 2>/dev/null)
+
+    if [[ -z "${mgmt_clusters}" ]]; then
+        error "No management clusters found in TMC"
+        return 1
+    fi
+
+    # Cache results
+    echo "${mgmt_clusters}" > "${cache_file}"
+    chmod 600 "${cache_file}"
+
+    debug "Cached ${mgmt_clusters//
+/ } management clusters"
+    echo "${mgmt_clusters}"
+    return 0
+}
+
+# Match environment string to management cluster name
+get_management_cluster_for_environment() {
+    local env_flag="$1"
+
+    # Get list of management clusters
+    local mgmt_list
+    if ! mgmt_list=$(discover_management_clusters); then
+        return 1
+    fi
+
+    # Try postfix match (PRIMARY - user confirmed this pattern)
+    # Example: "prod-1" matches "tmc-mgmt-prod-1", "management-prod-1"
+    local matched
+    matched=$(echo "${mgmt_list}" | grep -E -- "-${env_flag}$" | head -1)
+
+    if [[ -n "${matched}" ]]; then
+        debug "Matched management cluster: ${matched}"
+        echo "${matched}"
+        return 0
+    fi
+
+    # Fallback: Try exact match
+    matched=$(echo "${mgmt_list}" | grep -E "^${env_flag}$" | head -1)
+
+    if [[ -n "${matched}" ]]; then
+        debug "Matched management cluster (exact): ${matched}"
+        echo "${matched}"
+        return 0
+    fi
+
+    # No match found - show available options
+    error "Management cluster not found for environment: ${env_flag}"
+    warning "Available management clusters:"
+    echo "${mgmt_list}" | sed 's/^/  - /' >&2
+    return 1
+}
+
+# List all clusters in a management cluster
+discover_clusters_by_management() {
+    local mgmt_cluster="$1"
+
+    # Check cache
+    local cache_file="${CACHE_DIR}/mgmt-${mgmt_cluster}-clusters.cache"
+    if [[ -f "${cache_file}" ]]; then
+        local cache_timestamp=$(stat -c %Y "${cache_file}" 2>/dev/null || stat -f %m "${cache_file}" 2>/dev/null)
+        if is_cache_valid "${cache_timestamp}" "${KUBECONFIG_CACHE_EXPIRY}"; then
+            debug "Using cached cluster list for management cluster: ${mgmt_cluster}"
+            # Return just the cluster data (strip timestamp if present)
+            cat "${cache_file}" | cut -d':' -f1-3
+            return 0
+        fi
+    fi
+
+    # Query TMC
+    progress "Discovering clusters in management cluster: ${mgmt_cluster}..."
+    local tmc_output
+    if ! tmc_output=$(tanzu tmc cluster list -m "${mgmt_cluster}" -o json 2>&1); then
+        error "Failed to list clusters in management cluster: ${mgmt_cluster}"
+        debug "TMC output: ${tmc_output}"
+        return 1
+    fi
+
+    # Parse JSON using jq
+    local clusters
+    clusters=$(echo "${tmc_output}" | jq -r '.clusters[] | "\(.fullName.name)|\(.fullName.managementClusterName)|\(.fullName.provisionerName)"' 2>/dev/null)
+
+    if [[ -z "${clusters}" ]]; then
+        warning "No clusters found in management cluster: ${mgmt_cluster}"
+        return 0
+    fi
+
+    # Cache results with timestamp
+    local current_timestamp=$(date +%s)
+    echo "${clusters}" | while IFS= read -r line; do
+        echo "${line}:${current_timestamp}"
+    done > "${cache_file}"
+    chmod 600 "${cache_file}"
+
+    # Also update global metadata cache for faster subsequent lookups
+    echo "${clusters}" | while IFS='|' read -r cluster_name mgmt prov; do
+        # Remove old entry if exists
+        sed -i "/^${cluster_name}:/d" "${CLUSTER_METADATA_CACHE}" 2>/dev/null || true
+        # Add new entry
+        echo "${cluster_name}:${mgmt}:${prov}:${current_timestamp}" >> "${CLUSTER_METADATA_CACHE}"
+    done
+
+    echo "${clusters}"
+    return 0
+}
+
+#===============================================================================
 # Export Functions
 #===============================================================================
 
@@ -349,3 +486,6 @@ export -f list_tmc_clusters
 export -f test_cluster_connectivity
 export -f test_kubeconfig_connectivity
 export -f cleanup_cluster_cache
+export -f discover_management_clusters
+export -f get_management_cluster_for_environment
+export -f discover_clusters_by_management

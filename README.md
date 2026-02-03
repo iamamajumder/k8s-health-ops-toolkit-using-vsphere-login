@@ -1,8 +1,22 @@
 # Kubernetes Cluster Health Check Tool
 
-**Version 3.4** - Automated Upgrades & Multi-Cluster Operations
+**Version 3.5** - Management Cluster Discovery & Dynamic Operations
 
 ---
+
+## What's New in v3.5
+
+- **Management Cluster Discovery**: Dynamic cluster discovery for `k8s-ops-cmd.sh`
+  - New `-m <environment>` flag to discover clusters from TMC management clusters
+  - No need to maintain `clusters.conf` for dynamic environments
+  - Automatic environment detection (prod-1, uat-2, system-3, etc.)
+  - 12-hour caching for discovered clusters (consistent with v3.5 standards)
+  - Full integration with existing parallel/sequential execution modes
+- **Simplified Upgrade Script**: Complete rewrite of `k8s-cluster-upgrade.sh` (70% code reduction)
+  - Delegates to `k8s-health-check.sh` instead of duplicating health logic
+  - 350 lines vs 1200 lines in v3.4 - cleaner, more maintainable
+  - Same functionality, less code to maintain
+- **Standardized Cache Expiry**: All caches now use consistent 12-hour expiry
 
 ## What's New in v3.4
 
@@ -297,11 +311,11 @@ Upgrade completed successfully!
 
 ---
 
-## Multi-Cluster Ops Command (v3.4)
+## Multi-Cluster Ops Command (v3.5)
 
-The `k8s-ops-cmd.sh` script executes commands across all clusters in parallel.
+The `k8s-ops-cmd.sh` script executes commands across all clusters in parallel. Now supports dynamic cluster discovery from TMC management clusters.
 
-### Usage
+### Usage (File-based Mode)
 
 ```bash
 # Make script executable
@@ -331,6 +345,45 @@ chmod +x k8s-ops-cmd.sh
 # Minimal terminal output (results saved to file only)
 ./k8s-ops-cmd.sh --output-only "kubectl get nodes"
 ```
+
+### Management Cluster Discovery (Dynamic Cluster Selection - v3.5)
+
+Instead of maintaining `clusters.conf`, you can dynamically discover clusters from a TMC management cluster using the `-m` flag.
+
+**Usage:**
+```bash
+# Execute command on all clusters in prod-1 management cluster
+./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes --no-headers | wc -l"
+
+# Check Kubernetes version across uat-2 clusters
+./k8s-ops-cmd.sh -m uat-2 "kubectl version --short 2>/dev/null | grep Server"
+
+# Discovery with sequential execution
+./k8s-ops-cmd.sh -m system-3 --sequential "kubectl get nodes"
+
+# Custom batch size with discovery
+./k8s-ops-cmd.sh -m prod-1 --batch-size 10 "kubectl get pods -A"
+
+# Discovery with custom timeout
+./k8s-ops-cmd.sh -m prod-1 --timeout 60 "helm list -A"
+```
+
+**Supported Environments:**
+- `prod-1`, `prod-2`, `prod-3`, `prod-4` (Production)
+- `uat-2`, `uat-4` (UAT)
+- `system-1`, `system-3` (System)
+
+**How it works:**
+1. Script queries TMC for management cluster matching the environment
+2. Lists all clusters within that management cluster
+3. Executes your command on all discovered clusters
+4. Uses same parallel batch execution as file-based mode
+
+**Benefits:**
+- No need to maintain clusters.conf file
+- Always up-to-date with TMC cluster list
+- Ideal for dynamic environments where clusters are added/removed frequently
+- 12-hour caching for fast repeated execution
 
 ### Sample Output
 
@@ -522,12 +575,15 @@ health-check-results/
 | Metadata | `~/.k8s-health-check/metadata.cache` | 12 hours |
 | Kubeconfig | `~/.k8s-health-check/kubeconfigs/` | 12 hours |
 | TMC Context | `~/.k8s-health-check/context-timestamps.cache` | 12 hours |
+| Management Clusters | `~/.k8s-health-check/management-clusters.cache` | 12 hours |
+| Discovered Clusters | `~/.k8s-health-check/mgmt-<name>-clusters.cache` | 12 hours |
 
 **Cache Benefits:**
 - Reduces TMC API calls for better performance
-- 12-hour expiry ensures fresh data during upgrades
+- 12-hour expiry ensures fresh data during upgrades (v3.5 standard)
 - Automatic refresh when cache expires
 - Can be manually cleared with `--clear-cache` flag
+- Management discovery results cached for fast repeated execution
 
 ---
 
@@ -536,8 +592,8 @@ health-check-results/
 ```
 k8-health-check/
 ├── k8s-health-check.sh           # Unified health check script (v3.3)
-├── k8s-cluster-upgrade.sh        # Automated cluster upgrade (v3.4)
-├── k8s-ops-cmd.sh                # Multi-cluster ops command (v3.4)
+├── k8s-cluster-upgrade.sh        # Automated cluster upgrade (v3.5 - simplified)
+├── k8s-ops-cmd.sh                # Multi-cluster ops command (v3.5 - discovery support)
 ├── clusters.conf                  # Cluster configuration file
 ├── README.md                      # This documentation
 ├── RELEASE.md                     # Release notes and changelog
@@ -545,10 +601,10 @@ k8-health-check/
 │
 ├── lib/                           # Library modules
 │   ├── common.sh                  # Shared utilities & logging
-│   ├── config.sh                  # Configuration parser
+│   ├── config.sh                  # Configuration parser (v3.5 - discovery functions)
 │   ├── health.sh                  # Health calculations (v3.3)
-│   ├── tmc-context.sh             # TMC context auto-creation
-│   ├── tmc.sh                     # TMC integration & auto-discovery
+│   ├── tmc-context.sh             # TMC context auto-creation (v3.5 - env flags)
+│   ├── tmc.sh                     # TMC integration & auto-discovery (v3.5 - mgmt clusters)
 │   ├── comparison.sh              # PRE/POST comparison logic
 │   │
 │   └── sections/                  # Health check modules (18 sections)
@@ -626,6 +682,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 3.5 | 2026-02-03 | Management cluster discovery, simplified upgrade script, standardized caching |
 | 3.4 | 2026-01-29 | Automated cluster upgrade, multi-cluster ops command |
 | 3.3 | 2026-01-29 | Unified script with --mode flag, lib/health.sh module, test suite |
 | 3.2.6 | 2026-01-29 | Fixed grep -c pattern bug causing "0\n0" arithmetic errors |
