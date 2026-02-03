@@ -201,31 +201,50 @@ All scripts now run in **parallel batches of 6 clusters by default** for faster 
 
 ---
 
-## Automated Cluster Upgrade (v3.4)
+## Automated Cluster Upgrade (v3.5)
 
-The `k8s-cluster-upgrade.sh` script automates cluster upgrades with health validation.
+Simple orchestration script that delegates health checks to `k8s-health-check.sh` for clean, maintainable code.
 
 ### Upgrade Workflow
 
 ```
-PRE-Upgrade Health Check
-         │
-         ▼
-┌─────────────────────────┐
-│  HEALTHY   → Auto-proceed with upgrade
-│  WARNINGS  → Prompt user for confirmation
-│  CRITICAL  → Abort upgrade (fix issues first)
-└─────────────────────────┘
-         │
-         ▼
-Execute TMC Upgrade (--latest)
-         │
-         ▼
-Monitor Progress (polling every 30s)
-         │
-         ▼
-POST-Upgrade Health Check + Comparison
+1. Run PRE-upgrade health check (full output displayed)
+                    │
+                    ▼
+2. Prompt: "Do you want to upgrade [cluster]? (Y/N)"
+                    │
+                    ▼
+3. Execute TMC upgrade command (--latest)
+                    │
+                    ▼
+4. Monitor progress every 2 minutes
+   - Display: [elapsed] Phase: X | Version: Y | Health: Z
+   - Dynamic timeout: nodes × 5 min/node
+                    │
+                    ▼
+5. Display completion message with new version
+                    │
+                    ▼
+6. Run POST-upgrade health check with PRE vs POST comparison
 ```
+
+### Key Features
+
+- **No Code Duplication**: Delegates to existing `k8s-health-check.sh` script
+- **User Confirmation**: Explicit approval required before each upgrade
+- **Dynamic Timeout**: Calculated as number of nodes × 5 minutes per node
+- **Real-time Monitoring**: Progress updates every 2 minutes
+- **Automatic Comparison**: POST check automatically compares with PRE results
+
+### Timeout Calculation
+
+| Nodes | Default Timeout | Custom (10 min/node) |
+|-------|----------------|---------------------|
+| 3 nodes | 15 minutes | 30 minutes |
+| 5 nodes | 25 minutes | 50 minutes |
+| 10 nodes | 50 minutes | 100 minutes |
+
+Formula: `timeout = node_count × timeout_multiplier`
 
 ### Usage
 
@@ -233,29 +252,20 @@ POST-Upgrade Health Check + Comparison
 # Make script executable
 chmod +x k8s-cluster-upgrade.sh
 
-# Basic usage (uses ./clusters.conf)
+# Default: Use ./clusters.conf
 ./k8s-cluster-upgrade.sh
 
-# Upgrade a single cluster by name (no config file needed)
-./k8s-cluster-upgrade.sh -c my-cluster-name
+# Single cluster upgrade
+./k8s-cluster-upgrade.sh -c prod-workload-01
 
-# Dry run for a single cluster
-./k8s-cluster-upgrade.sh -c my-cluster-name --dry-run
+# Multiple clusters with custom config
+./k8s-cluster-upgrade.sh ./my-clusters.conf
 
-# With specific config file
-./k8s-cluster-upgrade.sh ./upgrade-clusters.conf
+# Custom timeout multiplier (default: 5 min/node)
+./k8s-cluster-upgrade.sh -c uat-system-01 --timeout-multiplier 10
 
-# Dry run (show what would be upgraded without executing)
-./k8s-cluster-upgrade.sh --dry-run
-
-# Skip health check prompts (auto-proceed on WARNINGS)
-./k8s-cluster-upgrade.sh --force
-
-# Custom timeout (default: 30 minutes)
-./k8s-cluster-upgrade.sh --timeout 45
-
-# Skip PRE-upgrade health check (not recommended)
-./k8s-cluster-upgrade.sh --skip-health-check
+# Dry run (shows what would be done)
+./k8s-cluster-upgrade.sh -c my-cluster --dry-run
 ```
 
 ### Upgrade Output Structure
@@ -263,22 +273,27 @@ chmod +x k8s-cluster-upgrade.sh
 ```
 upgrade-results/
 └── upgrade-YYYYMMDD_HHMMSS/
-    ├── cluster-name-1/
-    │   ├── pre-upgrade-health.txt
-    │   ├── upgrade-log.txt
-    │   ├── post-upgrade-health.txt
-    │   └── comparison-report.txt
-    └── cluster-name-2/
-        └── ...
+    └── cluster-name/
+        ├── pre-upgrade-health.txt      # PRE health check report
+        ├── upgrade-log.txt             # Upgrade execution and monitoring
+        ├── post-upgrade-health.txt     # POST health check report
+        └── comparison-report.txt       # PRE vs POST comparison
 ```
 
-### Health Decision Matrix
+### Example Monitoring Output
 
-| PRE-Upgrade Status | Behavior |
-|-------------------|----------|
-| **HEALTHY** | Automatically proceeds with upgrade |
-| **WARNINGS** | Prompts for confirmation (use `--force` to skip) |
-| **CRITICAL** | Aborts upgrade with error message |
+```
+[  2 min] Phase: UPGRADING    | Version: v1.28.2 | Health: HEALTHY
+[  4 min] Phase: UPGRADING    | Version: v1.28.2 | Health: HEALTHY
+[  6 min] Phase: UPGRADING    | Version: v1.29.0 | Health: HEALTHY
+[  8 min] Phase: READY        | Version: v1.29.0 | Health: HEALTHY
+
+Upgrade completed successfully!
+  Cluster: prod-workload-01
+  Version: v1.29.0
+  Health: HEALTHY
+  Duration: 8 minutes
+```
 
 ---
 
@@ -504,9 +519,15 @@ health-check-results/
 
 | Cache Type | Location | Expiry |
 |------------|----------|--------|
-| Metadata | `~/.k8s-health-check/metadata.cache` | 7 days |
+| Metadata | `~/.k8s-health-check/metadata.cache` | 12 hours |
 | Kubeconfig | `~/.k8s-health-check/kubeconfigs/` | 12 hours |
 | TMC Context | `~/.k8s-health-check/context-timestamps.cache` | 12 hours |
+
+**Cache Benefits:**
+- Reduces TMC API calls for better performance
+- 12-hour expiry ensures fresh data during upgrades
+- Automatic refresh when cache expires
+- Can be manually cleared with `--clear-cache` flag
 
 ---
 

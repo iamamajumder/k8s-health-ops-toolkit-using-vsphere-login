@@ -22,7 +22,7 @@ CLUSTER_METADATA_CACHE="${CACHE_DIR}/metadata.cache"
 KUBECONFIG_CACHE_DIR="${CACHE_DIR}/kubeconfigs"
 
 # Cache expiry times (in seconds)
-METADATA_CACHE_EXPIRY=604800    # 7 days - metadata rarely changes
+METADATA_CACHE_EXPIRY=43200     # 12 hours - consistent with other caches
 KUBECONFIG_CACHE_EXPIRY=43200   # 12 hours - kubeconfig refreshed twice daily
 
 # Initialize cache directory
