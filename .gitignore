@@ -46,3 +46,6 @@ Thumbs.db
 # Backup Files
 *.bak
 *.backup
+
+# Claude Files
+CLAUDE*.*
