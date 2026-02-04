@@ -277,26 +277,24 @@ execute_upgrade() {
 get_node_count() {
     local cluster_name="$1"
 
-    # Fetch kubeconfig for this specific cluster
+    # Use cached kubeconfig from health check (should already exist)
     local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" </dev/null >/dev/null 2>&1; then
-        warning "Could not fetch kubeconfig for ${cluster_name}, using default node count"
-        echo "5"
-        return 0
-    fi
 
     # Get node count using cluster-specific kubeconfig
-    local node_count=$(kubectl --kubeconfig="${cluster_kubeconfig}" get nodes --no-headers 2>/dev/null | wc -l | tr -d ' \n\r')
-    node_count=${node_count:-0}
+    if [[ -f "${cluster_kubeconfig}" ]]; then
+        local node_count=$(kubectl --kubeconfig="${cluster_kubeconfig}" get nodes --no-headers 2>/dev/null | wc -l | tr -d ' \n\r')
+        node_count=${node_count:-0}
 
-    if [[ ${node_count} -eq 0 ]]; then
-        warning "No nodes found for ${cluster_name}, using default"
-        node_count=5  # Default fallback for timeout calculation
-    else
-        debug "Node count for ${cluster_name}: ${node_count}"
+        if [[ ${node_count} -gt 0 ]]; then
+            debug "Node count for ${cluster_name}: ${node_count}"
+            echo "${node_count}"
+            return 0
+        fi
     fi
 
-    echo "${node_count}"
+    # Fallback if kubeconfig not found or no nodes
+    warning "Could not determine node count for ${cluster_name}, using default"
+    echo "5"
 }
 
 ################################################################################
@@ -317,15 +315,15 @@ monitor_upgrade_progress() {
         return 1
     fi
 
-    # Fetch kubeconfig for direct cluster queries
+    # Check if kubeconfig exists from health check (should already be cached)
     local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
     local use_kubectl_monitoring=false
 
-    if fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" </dev/null >/dev/null 2>&1; then
+    if [[ -f "${cluster_kubeconfig}" ]]; then
         debug "Kubeconfig available - will use kubectl for monitoring"
         use_kubectl_monitoring=true
     else
-        warning "Could not fetch kubeconfig - will rely on TMC status only"
+        warning "Kubeconfig not found - will rely on TMC status only"
     fi
 
     local start_time=$(date +%s)
@@ -550,27 +548,23 @@ upgrade_single_cluster() {
     echo "  Provisioner: ${provisioner}"
     echo ""
 
-    # Step 4: Get PRE-upgrade version for verification
+    # Step 4: Get PRE-upgrade version for verification (using cached kubeconfig from health check)
     progress "Getting current cluster version..."
 
-    # Fetch kubeconfig for this cluster
     local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
     local pre_version="unknown"
 
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" </dev/null >/dev/null 2>&1; then
-        warning "Could not fetch kubeconfig, version detection will be skipped"
-        pre_version="unknown"
-    else
-        # Query cluster version using kubectl (more reliable than TMC status)
+    # Use the kubeconfig that was already fetched during health check
+    if [[ -f "${cluster_kubeconfig}" ]]; then
         pre_version=$(kubectl --kubeconfig="${cluster_kubeconfig}" version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // empty' | tr -d ' \n\r')
         pre_version=${pre_version:-unknown}
+    fi
 
-        if [[ "${pre_version}" == "unknown" || -z "${pre_version}" ]]; then
-            warning "Could not determine pre-upgrade version, will skip version verification"
-            pre_version="unknown"
-        else
-            success "Pre-upgrade version: ${pre_version}"
-        fi
+    if [[ "${pre_version}" == "unknown" || -z "${pre_version}" ]]; then
+        warning "Could not determine pre-upgrade version, will skip version verification"
+        pre_version="unknown"
+    else
+        success "Pre-upgrade version: ${pre_version}"
     fi
     echo ""
 
