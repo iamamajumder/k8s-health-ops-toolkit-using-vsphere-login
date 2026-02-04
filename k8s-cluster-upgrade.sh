@@ -277,14 +277,23 @@ execute_upgrade() {
 get_node_count() {
     local cluster_name="$1"
 
-    # Try to get node count from current kubeconfig
-    local node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' \n\r')
+    # Fetch kubeconfig for this specific cluster
+    local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" >/dev/null 2>&1; then
+        warning "Could not fetch kubeconfig for ${cluster_name}, using default node count"
+        echo "5"
+        return 0
+    fi
+
+    # Get node count using cluster-specific kubeconfig
+    local node_count=$(kubectl --kubeconfig="${cluster_kubeconfig}" get nodes --no-headers 2>/dev/null | wc -l | tr -d ' \n\r')
     node_count=${node_count:-0}
 
     if [[ ${node_count} -eq 0 ]]; then
-        # Fallback: use default if kubectl unavailable
-        debug "Could not determine node count via kubectl, using default"
+        warning "No nodes found for ${cluster_name}, using default"
         node_count=5  # Default fallback for timeout calculation
+    else
+        debug "Node count for ${cluster_name}: ${node_count}"
     fi
 
     echo "${node_count}"
@@ -308,6 +317,17 @@ monitor_upgrade_progress() {
         return 1
     fi
 
+    # Fetch kubeconfig for direct cluster queries
+    local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    local use_kubectl_monitoring=false
+
+    if fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" >/dev/null 2>&1; then
+        debug "Kubeconfig available - will use kubectl for monitoring"
+        use_kubectl_monitoring=true
+    else
+        warning "Could not fetch kubeconfig - will rely on TMC status only"
+    fi
+
     local start_time=$(date +%s)
     local check_interval=120  # 2 minutes
 
@@ -315,10 +335,8 @@ monitor_upgrade_progress() {
     progress "Monitoring upgrade progress (updates every 2 minutes)..." | tee -a "${upgrade_log}"
     echo "Timeout: ${timeout_minutes} minutes" | tee -a "${upgrade_log}"
     echo "Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
+    echo "Monitoring method: $([ "$use_kubectl_monitoring" = true ] && echo "kubectl (direct)" || echo "TMC status")" | tee -a "${upgrade_log}"
     echo "" | tee -a "${upgrade_log}"
-
-    debug "Starting upgrade monitoring for ${cluster_name}"
-    debug "Pre-upgrade version: ${pre_version}"
 
     local iteration=0
     while true; do
@@ -328,75 +346,105 @@ monitor_upgrade_progress() {
 
         debug "Monitor iteration ${iteration}, elapsed: ${elapsed} minutes"
 
-        # Query cluster status
-        local status_json=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null)
-        local get_exit_code=$?
+        # Method 1: kubectl-based monitoring (reference script pattern)
+        if [[ "${use_kubectl_monitoring}" == "true" ]]; then
+            # Get current version from cluster
+            local current_version=$(kubectl --kubeconfig="${cluster_kubeconfig}" version -o json 2>/dev/null | \
+                jq -r '.serverVersion.gitVersion // empty' | tr -d ' \n\r')
+            current_version=${current_version:-unknown}
 
-        if [[ ${get_exit_code} -ne 0 ]]; then
-            warning "Failed to query cluster status (attempt ${iteration}), will retry..." | tee -a "${upgrade_log}"
-            sleep ${check_interval}
-            continue
-        fi
+            # Get node status
+            local nodes_total=$(kubectl --kubeconfig="${cluster_kubeconfig}" get nodes --no-headers 2>/dev/null | wc -l | tr -d ' \n\r')
+            nodes_total=${nodes_total:-0}
 
-        local phase=$(echo "${status_json}" | jq -r '.status.phase // "UNKNOWN"')
-        local version=$(echo "${status_json}" | jq -r '.status.kubeVersion // "unknown"')
-        local health=$(echo "${status_json}" | jq -r '.status.health // "UNKNOWN"')
+            local nodes_ready=$(kubectl --kubeconfig="${cluster_kubeconfig}" get nodes --no-headers 2>/dev/null | \
+                grep -c " Ready " || true)
+            nodes_ready=$(echo "${nodes_ready}" | tr -d ' \n\r')
+            nodes_ready=${nodes_ready:-0}
 
-        debug "Current state - Phase: ${phase}, Version: ${version}, Health: ${health}"
+            # Display progress
+            printf "[%3d min] Version: %-12s | Nodes: %d/%d Ready\n" \
+                "${elapsed}" "${current_version}" "${nodes_ready}" "${nodes_total}" | tee -a "${upgrade_log}"
 
-        # Display progress
-        printf "[%3d min] Phase: %-12s | Version: %-10s | Health: %s\n" \
-            "${elapsed}" "${phase}" "${version}" "${health}" | tee -a "${upgrade_log}"
+            # Check for completion: version changed AND all nodes ready
+            if [[ "${current_version}" != "${pre_version}" && "${current_version}" != "unknown" ]]; then
+                if [[ ${nodes_ready} -eq ${nodes_total} && ${nodes_total} -gt 0 ]]; then
+                    echo "" | tee -a "${upgrade_log}"
+                    success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
+                    echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
+                    echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
+                    echo "  Post-upgrade version: ${current_version}" | tee -a "${upgrade_log}"
+                    echo "  Nodes ready: ${nodes_ready}/${nodes_total}" | tee -a "${upgrade_log}"
+                    echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
+                    echo "" | tee -a "${upgrade_log}"
 
-        # Check for completion (READY phase AND version changed)
-        if [[ "${phase}" == "READY" ]]; then
-            echo "" | tee -a "${upgrade_log}"
-
-            # Verify version changed
-            if [[ "${version}" != "${pre_version}" && "${version}" != "unknown" ]]; then
-                success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
-                echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
-                echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
-                echo "  Post-upgrade version: ${version}" | tee -a "${upgrade_log}"
-                echo "  Health: ${health}" | tee -a "${upgrade_log}"
-                echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
-                echo "" | tee -a "${upgrade_log}"
-
-                # Save versions for comparison
-                echo "${pre_version}" > "${output_dir}/.pre-version"
-                echo "${version}" > "${output_dir}/.post-version"
-
-                return 0
-            else
-                warning "Cluster is READY but version unchanged (${pre_version} -> ${version})" | tee -a "${upgrade_log}"
-                warning "Continuing to monitor..." | tee -a "${upgrade_log}"
+                    # Save versions
+                    echo "${pre_version}" > "${output_dir}/.pre-version"
+                    echo "${current_version}" > "${output_dir}/.post-version"
+                    return 0
+                else
+                    debug "Version upgraded but waiting for all nodes to be ready (${nodes_ready}/${nodes_total})"
+                fi
             fi
-        fi
 
-        # Check for error states
-        if [[ "${phase}" == "ERROR" ]]; then
-            echo "" | tee -a "${upgrade_log}"
-            error "Upgrade failed - cluster in ERROR phase!" | tee -a "${upgrade_log}"
-            echo "  Phase: ${phase}" | tee -a "${upgrade_log}"
-            echo "  Health: ${health}" | tee -a "${upgrade_log}"
-            echo "  Version: ${version}" | tee -a "${upgrade_log}"
-            echo "" | tee -a "${upgrade_log}"
-            return 1
+        else
+            # Method 2: TMC-based monitoring (fallback)
+            local status_json=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null)
+            local get_exit_code=$?
+
+            if [[ ${get_exit_code} -ne 0 ]]; then
+                warning "Failed to query cluster status (attempt ${iteration}), will retry..." | tee -a "${upgrade_log}"
+                sleep ${check_interval}
+                continue
+            fi
+
+            # Try multiple possible jq paths for version
+            local version=$(echo "${status_json}" | jq -r '.status.version // .spec.version // .status.kubernetesVersion // empty' | tr -d ' \n\r')
+            version=${version:-unknown}
+
+            # Get phase (READY, UPDATING, ERROR, etc.)
+            local phase=$(echo "${status_json}" | jq -r '.status.phase // .status.conditions[0].type // empty' | tr -d ' \n\r')
+            phase=${phase:-UNKNOWN}
+
+            printf "[%3d min] Phase: %-12s | Version: %-10s\n" \
+                "${elapsed}" "${phase}" "${version}" | tee -a "${upgrade_log}"
+
+            # Check for completion
+            if [[ "${phase}" =~ ^(READY|Ready)$ ]]; then
+                if [[ "${version}" != "${pre_version}" && "${version}" != "unknown" ]]; then
+                    echo "" | tee -a "${upgrade_log}"
+                    success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
+                    echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
+                    echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
+                    echo "  Post-upgrade version: ${version}" | tee -a "${upgrade_log}"
+                    echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
+                    echo "" | tee -a "${upgrade_log}"
+
+                    echo "${pre_version}" > "${output_dir}/.pre-version"
+                    echo "${version}" > "${output_dir}/.post-version"
+                    return 0
+                else
+                    warning "Cluster is READY but version unchanged (${pre_version} -> ${version})" | tee -a "${upgrade_log}"
+                    warning "Continuing to monitor..." | tee -a "${upgrade_log}"
+                fi
+            fi
+
+            # Check for error states
+            if [[ "${phase}" =~ ^(ERROR|Error|Failed)$ ]]; then
+                echo "" | tee -a "${upgrade_log}"
+                error "Upgrade failed - cluster in ERROR phase!" | tee -a "${upgrade_log}"
+                return 1
+            fi
         fi
 
         # Check timeout
         if [[ ${elapsed} -ge ${timeout_minutes} ]]; then
             echo "" | tee -a "${upgrade_log}"
             error "Upgrade timeout after ${timeout_minutes} minutes" | tee -a "${upgrade_log}"
-            echo "  Last known phase: ${phase}" | tee -a "${upgrade_log}"
-            echo "  Last known version: ${version}" | tee -a "${upgrade_log}"
-            echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
-            echo "" | tee -a "${upgrade_log}"
             return 2
         fi
 
         # Wait before next check
-        debug "Sleeping ${check_interval} seconds before next check..."
         sleep ${check_interval}
     done
 }
@@ -504,12 +552,25 @@ upgrade_single_cluster() {
 
     # Step 4: Get PRE-upgrade version for verification
     progress "Getting current cluster version..."
-    local pre_version=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null | jq -r '.status.kubeVersion // "unknown"')
-    if [[ -z "${pre_version}" || "${pre_version}" == "unknown" ]]; then
-        warning "Could not determine pre-upgrade version, will skip version verification"
+
+    # Fetch kubeconfig for this cluster
+    local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    local pre_version="unknown"
+
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" >/dev/null 2>&1; then
+        warning "Could not fetch kubeconfig, version detection will be skipped"
         pre_version="unknown"
     else
-        success "Pre-upgrade version: ${pre_version}"
+        # Query cluster version using kubectl (more reliable than TMC status)
+        pre_version=$(kubectl --kubeconfig="${cluster_kubeconfig}" version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // empty' | tr -d ' \n\r')
+        pre_version=${pre_version:-unknown}
+
+        if [[ "${pre_version}" == "unknown" || -z "${pre_version}" ]]; then
+            warning "Could not determine pre-upgrade version, will skip version verification"
+            pre_version="unknown"
+        else
+            success "Pre-upgrade version: ${pre_version}"
+        fi
     fi
     echo ""
 
