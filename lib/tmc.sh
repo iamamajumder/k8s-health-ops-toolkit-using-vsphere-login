@@ -6,10 +6,9 @@
 #===============================================================================
 
 # Source common functions if not already loaded
-if [ -z "${COMMON_LIB_LOADED}" ]; then
+if [ -z "${COMMON_LIB_LOADED:-}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     source "${SCRIPT_DIR}/lib/common.sh"
-    export COMMON_LIB_LOADED=1
 fi
 
 #===============================================================================
@@ -357,10 +356,10 @@ discover_management_clusters() {
     fi
 
     # Query TMC
-    progress "Discovering management clusters from TMC..."
+    progress "Discovering management clusters from TMC..." >&2
     local tmc_output
     if ! tmc_output=$(tanzu tmc management-cluster list -o json 2>&1); then
-        error "Failed to query TMC management clusters"
+        error "Failed to query TMC management clusters" >&2
         debug "TMC output: ${tmc_output}"
         return 1
     fi
@@ -370,7 +369,7 @@ discover_management_clusters() {
     mgmt_clusters=$(echo "${tmc_output}" | jq -r '.managementClusters[].fullName.name' 2>/dev/null)
 
     if [[ -z "${mgmt_clusters}" ]]; then
-        error "No management clusters found in TMC"
+        error "No management clusters found in TMC" >&2
         return 1
     fi
 
@@ -415,8 +414,8 @@ get_management_cluster_for_environment() {
     fi
 
     # No match found - show available options
-    error "Management cluster not found for environment: ${env_flag}"
-    warning "Available management clusters:"
+    error "Management cluster not found for environment: ${env_flag}" >&2
+    warning "Available management clusters:" >&2
     echo "${mgmt_list}" | sed 's/^/  - /' >&2
     return 1
 }
@@ -438,11 +437,11 @@ discover_clusters_by_management() {
     fi
 
     # Query TMC
-    progress "Discovering clusters in management cluster: ${mgmt_cluster}..."
+    progress "Discovering clusters in management cluster: ${mgmt_cluster}..." >&2
     local tmc_output
     if ! tmc_output=$(tanzu tmc cluster list -m "${mgmt_cluster}" -o json 2>&1); then
-        error "Failed to list clusters in management cluster: ${mgmt_cluster}"
-        debug "TMC output: ${tmc_output}"
+        error "Failed to list clusters in management cluster: ${mgmt_cluster}" >&2
+        debug "TMC output: ${tmc_output}" >&2
         return 1
     fi
 
@@ -451,7 +450,7 @@ discover_clusters_by_management() {
     clusters=$(echo "${tmc_output}" | jq -r '.clusters[] | "\(.fullName.name)|\(.fullName.managementClusterName)|\(.fullName.provisionerName)"' 2>/dev/null)
 
     if [[ -z "${clusters}" ]]; then
-        warning "No clusters found in management cluster: ${mgmt_cluster}"
+        warning "No clusters found in management cluster: ${mgmt_cluster}" >&2
         return 0
     fi
 

@@ -6,10 +6,9 @@
 #===============================================================================
 
 # Source common functions if not already loaded
-if [ -z "${COMMON_LIB_LOADED}" ]; then
+if [ -z "${COMMON_LIB_LOADED:-}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     source "${SCRIPT_DIR}/lib/common.sh"
-    export COMMON_LIB_LOADED=1
 fi
 
 #===============================================================================

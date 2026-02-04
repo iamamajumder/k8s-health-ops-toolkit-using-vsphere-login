@@ -595,6 +595,9 @@ run_ops_command() {
     # Note: Credentials will be prompted inside ensure_tmc_context() only if
     # a new context needs to be created (existing valid contexts are reused)
 
+    # Define results file path (used by both modes)
+    local results_file="${results_dir}/raw_results.txt"
+
     # Execute commands
     if [[ -n "${mgmt_env}" ]]; then
         # Use list-based execution for management discovery mode
@@ -605,7 +608,6 @@ run_ops_command() {
         fi
     else
         # Use file-based execution for config file mode
-        local results_file="${results_dir}/raw_results.txt"
         if [[ "${parallel}" == "true" ]]; then
             run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}"
         else

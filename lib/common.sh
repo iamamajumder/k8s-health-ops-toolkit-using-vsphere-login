@@ -122,6 +122,17 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+# Check if command exists and exit with error message if not found
+check_command() {
+    local cmd="$1"
+    local error_msg="${2:-$cmd is required but not installed}"
+
+    if ! command_exists "${cmd}"; then
+        error "${error_msg}"
+        exit 1
+    fi
+}
+
 #===============================================================================
 # File Management Functions
 #===============================================================================
@@ -282,6 +293,7 @@ export -f print_header
 export -f run_check
 export -f verify_kubectl_connectivity
 export -f command_exists
+export -f check_command
 export -f create_output_directory
 export -f create_symlink
 export -f extract_section
@@ -295,3 +307,6 @@ export -f display_info
 export -f get_environment_info
 export -f get_timestamp
 export -f get_formatted_timestamp
+
+# Mark library as loaded to prevent duplicate sourcing
+export COMMON_LIB_LOADED=1
