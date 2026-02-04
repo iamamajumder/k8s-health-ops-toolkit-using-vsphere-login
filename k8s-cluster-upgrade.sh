@@ -189,28 +189,31 @@ prompt_user_confirmation() {
 get_upgrade_inputs() {
     local cluster_name="$1"
 
-    progress "Retrieving cluster metadata from TMC..."
-
-    # Discover cluster metadata from TMC (returns "management|provisioner")
+    # Discover cluster metadata from TMC (returns "management|provisioner" to stdout, messages to stderr)
     local metadata=$(discover_cluster_metadata "${cluster_name}")
+    local discover_result=$?
 
-    if [[ -z "${metadata}" ]]; then
+    if [[ ${discover_result} -ne 0 ]] || [[ -z "${metadata}" ]]; then
         error "Failed to retrieve metadata for ${cluster_name}"
         return 1
     fi
 
     # Parse metadata (pipe-delimited format from discover_cluster_metadata)
-    local mgmt_cluster=$(echo "${metadata}" | cut -d'|' -f1)
-    local provisioner=$(echo "${metadata}" | cut -d'|' -f2)
+    # Trim any whitespace/newlines for safety
+    local mgmt_cluster=$(echo "${metadata}" | cut -d'|' -f1 | tr -d ' \n\r\t')
+    local provisioner=$(echo "${metadata}" | cut -d'|' -f2 | tr -d ' \n\r\t')
 
     if [[ -z "${mgmt_cluster}" || -z "${provisioner}" ]]; then
         error "Incomplete metadata for ${cluster_name}"
-        echo "  Management cluster: ${mgmt_cluster:-<missing>}"
-        echo "  Provisioner: ${provisioner:-<missing>}"
+        echo "  Management cluster: '${mgmt_cluster:-<missing>}'"
+        echo "  Provisioner: '${provisioner:-<missing>}'"
+        echo "  Raw metadata: '${metadata}'"
         return 1
     fi
 
-    # Export for use by caller
+    debug "Parsed metadata - Management: '${mgmt_cluster}', Provisioner: '${provisioner}'"
+
+    # Export for use by caller (clean values only)
     echo "${mgmt_cluster}|${provisioner}"
     return 0
 }
@@ -226,6 +229,12 @@ execute_upgrade() {
 
     progress "Initiating upgrade for ${cluster_name}..."
     echo ""
+
+    # Debug: Show exact values being used
+    debug "Upgrade parameters:"
+    debug "  Cluster: '${cluster_name}'"
+    debug "  Management: '${mgmt_cluster}'"
+    debug "  Provisioner: '${provisioner}'"
 
     # Timestamped upgrade log filename
     local timestamp=$(date '+%Y%m%d_%H%M%S')
@@ -250,7 +259,9 @@ execute_upgrade() {
         return 0
     fi
 
-    # Execute upgrade
+    # Execute upgrade with properly quoted parameters
+    debug "Executing: tanzu tmc cluster upgrade '${cluster_name}' -m '${mgmt_cluster}' -p '${provisioner}' --latest"
+
     if tanzu tmc cluster upgrade "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" --latest 2>&1 | tee -a "${upgrade_log}"; then
         success "Upgrade initiated successfully"
         return 0
