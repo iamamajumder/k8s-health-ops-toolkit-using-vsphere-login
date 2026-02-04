@@ -631,6 +631,8 @@ compare_events() {
 }
 
 # Display comparison summary to CLI
+# NOTE: Deprecated as of v3.6. Main script now displays full comparison report
+# using 'cat'. Kept for backward compatibility.
 display_comparison_summary() {
     local diff_file="$1"
     local cluster_name="$2"

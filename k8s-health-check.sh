@@ -264,8 +264,12 @@ process_cluster() {
 
                 success "Comparison report generated: ${comparison_file}"
 
-                # Display beautified summary on CLI
-                display_comparison_summary "${comparison_file}" "${cluster_name}"
+                # Display full comparison report on CLI
+                echo ""
+                cat "${comparison_file}"
+                echo ""
+                echo "================================================================================"
+                echo ""
             else
                 warning "PRE-change report not found for ${cluster_name}, skipping comparison"
             fi
@@ -776,7 +780,11 @@ run_health_checks() {
             for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
                 local comparison_file="${output_base_dir}/${cluster_name}/comparison-report.txt"
                 if [[ -f "${comparison_file}" ]] && [[ -s "${comparison_file}" ]]; then
-                    display_comparison_summary "${comparison_file}" "${cluster_name}"
+                    echo ""
+                    cat "${comparison_file}"
+                    echo ""
+                    echo "================================================================================"
+                    echo ""
                     comparison_found=true
                 else
                     # Debug: show why comparison isn't displayed
