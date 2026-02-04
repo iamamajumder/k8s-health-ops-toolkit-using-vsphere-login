@@ -891,7 +891,56 @@ run_health_checks() {
     fi
 
     echo ""
-    echo -e "${CYAN}Results directory: ${NC}${output_base_dir}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}Results Files:${NC}"
+    echo ""
+
+    # Display actual file paths for each cluster
+    if [[ "${parallel}" == "true" ]]; then
+        for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
+            local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+
+            # Find the latest report file for this execution
+            local latest_report=$(ls -t "${cluster_hcr_dir}"/${mode}-hcr-*.txt 2>/dev/null | head -1)
+            if [[ -n "${latest_report}" ]]; then
+                echo -e "${GREEN}[${cluster_name}]${NC}"
+                echo "  Health Report: ${latest_report}"
+
+                # If POST mode, also show comparison report
+                if [[ "${mode}" == "post" ]]; then
+                    local latest_comparison=$(ls -t "${cluster_hcr_dir}"/comparison-hcr-*.txt 2>/dev/null | head -1)
+                    if [[ -n "${latest_comparison}" ]]; then
+                        echo "  Comparison:    ${latest_comparison}"
+                    fi
+                fi
+                echo ""
+            fi
+        done
+    else
+        # Sequential mode
+        while IFS= read -r cluster_name; do
+            local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+
+            # Find the latest report file for this execution
+            local latest_report=$(ls -t "${cluster_hcr_dir}"/${mode}-hcr-*.txt 2>/dev/null | head -1)
+            if [[ -n "${latest_report}" ]]; then
+                echo -e "${GREEN}[${cluster_name}]${NC}"
+                echo "  Health Report: ${latest_report}"
+
+                # If POST mode, also show comparison report
+                if [[ "${mode}" == "post" ]]; then
+                    local latest_comparison=$(ls -t "${cluster_hcr_dir}"/comparison-hcr-*.txt 2>/dev/null | head -1)
+                    if [[ -n "${latest_comparison}" ]]; then
+                        echo "  Comparison:    ${latest_comparison}"
+                    fi
+                fi
+                echo ""
+            fi
+        done < <(get_cluster_list "${CONFIG_FILE}")
+    fi
+
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════${NC}"
+    echo ""
 
     # PRE mode: Update "latest" files for each cluster
     if [[ "${mode}" == "pre" ]]; then

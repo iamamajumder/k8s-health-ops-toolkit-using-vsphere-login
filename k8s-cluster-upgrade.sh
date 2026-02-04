@@ -191,17 +191,17 @@ get_upgrade_inputs() {
 
     progress "Retrieving cluster metadata from TMC..."
 
-    # Get cluster metadata from cache or TMC
-    local metadata=$(get_cluster_metadata "${cluster_name}")
+    # Discover cluster metadata from TMC (returns "management|provisioner")
+    local metadata=$(discover_cluster_metadata "${cluster_name}")
 
     if [[ -z "${metadata}" ]]; then
         error "Failed to retrieve metadata for ${cluster_name}"
         return 1
     fi
 
-    # Parse metadata
-    local mgmt_cluster=$(echo "${metadata}" | jq -r '.managementClusterName // empty')
-    local provisioner=$(echo "${metadata}" | jq -r '.provisionerName // empty')
+    # Parse metadata (pipe-delimited format from discover_cluster_metadata)
+    local mgmt_cluster=$(echo "${metadata}" | cut -d'|' -f1)
+    local provisioner=$(echo "${metadata}" | cut -d'|' -f2)
 
     if [[ -z "${mgmt_cluster}" || -z "${provisioner}" ]]; then
         error "Incomplete metadata for ${cluster_name}"
@@ -271,13 +271,9 @@ get_node_count() {
     node_count=${node_count:-0}
 
     if [[ ${node_count} -eq 0 ]]; then
-        # Fallback: try to get from cluster metadata
-        local metadata=$(get_cluster_metadata "${cluster_name}")
-        if [[ -n "${metadata}" ]]; then
-            node_count=$(echo "${metadata}" | jq -r '.status.nodeCount // 5')
-        else
-            node_count=5  # Default fallback
-        fi
+        # Fallback: use default if kubectl unavailable
+        debug "Could not determine node count via kubectl, using default"
+        node_count=5  # Default fallback for timeout calculation
     fi
 
     echo "${node_count}"
