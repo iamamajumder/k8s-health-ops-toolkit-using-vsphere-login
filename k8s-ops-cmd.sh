@@ -31,6 +31,7 @@ DEFAULT_CONFIG="./clusters.conf"
 OUTPUT_DIR="${SCRIPT_DIR}/ops-results"
 BATCH_SIZE=6                # Default batch size for parallel execution
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
+SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
 
 #===============================================================================
 # Usage Function
@@ -42,6 +43,7 @@ Kubernetes Multi-Cluster Ops Command Script v3.5
 
 Usage:
   $0 [OPTIONS] "<command>" [clusters.conf]
+  $0 -c <cluster> [OPTIONS] "<command>"
   $0 -m <environment> [OPTIONS] "<command>"
 
 Description:
@@ -57,13 +59,22 @@ Arguments:
 
 Options:
   -h, --help                       Show this help message
+  -c, --cluster <name>             Run command on a single cluster (no clusters.conf needed)
+                                   Mutually exclusive with -m and clusters.conf
   -m, --management-cluster <env>   Discover clusters from management cluster
                                    Environment: prod-1, prod-2, uat-2, system-3
-                                   Mutually exclusive with clusters.conf
+                                   Mutually exclusive with -c and clusters.conf
   --timeout <sec>                  Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
   --sequential                     Run commands sequentially instead of parallel
   --batch-size N                   Number of clusters to process in parallel (default: 6)
   --output-only                    Minimal terminal output, save full results to file
+
+Examples (Single cluster mode):
+  # Run command on a single cluster
+  $0 -c prod-workload-01 "kubectl get nodes"
+
+  # Single cluster with custom timeout
+  $0 -c prod-workload-01 --timeout 60 "kubectl get pods -A"
 
 Examples (File-based mode):
   # Get Contour version on all clusters (parallel by default)
@@ -687,6 +698,16 @@ parse_arguments() {
                 fi
                 shift
                 ;;
+            -c|--cluster)
+                shift
+                if [[ -n "$1" ]] && [[ ! "$1" =~ ^- ]]; then
+                    SINGLE_CLUSTER="$1"
+                else
+                    error "Cluster name required for -c/--cluster option"
+                    exit 1
+                fi
+                shift
+                ;;
             -m|--management-cluster)
                 shift
                 if [[ -n "$1" ]] && [[ ! "$1" =~ ^- ]]; then
@@ -730,11 +751,13 @@ parse_arguments() {
                 if [[ -z "${command}" ]]; then
                     command="$1"
                 else
-                    # Only accept config file if not using management discovery
-                    if [[ -z "${MANAGEMENT_ENV}" ]]; then
-                        config_file="$1"
-                    else
+                    # Only accept config file if not using management discovery or single cluster
+                    if [[ -n "${SINGLE_CLUSTER}" ]]; then
+                        warning "Ignoring config file argument when using -c flag: $1"
+                    elif [[ -n "${MANAGEMENT_ENV}" ]]; then
                         warning "Ignoring config file argument when using -m flag: $1"
+                    else
+                        config_file="$1"
                     fi
                 fi
                 shift
@@ -747,6 +770,23 @@ parse_arguments() {
         error "No command specified"
         echo ""
         show_usage
+    fi
+
+    # Validate mutual exclusivity of -c, -m, and config file
+    if [[ -n "${SINGLE_CLUSTER}" && -n "${MANAGEMENT_ENV}" ]]; then
+        error "Cannot specify both -c and -m options"
+        exit 1
+    fi
+
+    # Handle single cluster mode (-c flag)
+    if [[ -n "${SINGLE_CLUSTER}" ]]; then
+        if [[ "${config_file}" != "${DEFAULT_CONFIG}" ]]; then
+            error "Cannot specify both -c CLUSTER and a config file"
+            exit 1
+        fi
+        local temp_config=$(mktemp)
+        echo "${SINGLE_CLUSTER}" > "${temp_config}"
+        config_file="${temp_config}"
     fi
 
     # Run the ops command

@@ -1,92 +1,71 @@
-# Kubernetes Cluster Health Check Tool
+# Kubernetes Cluster Health Check & Management Tool
 
-**Version 3.6** - Per-Cluster Output Structure & Bug Fixes
+**Version 3.7** | VMware Cloud Foundation 5.2.1 (VKS 3.3.3, VKR 1.28.x/1.29.x)
 
----
-
-## What's New in v3.6
-
-- **Output Folder Restructuring**: Complete reorganization from timestamp-based to per-cluster directories
-  - All cluster data now in `~/k8s-health-check/output/<cluster>/`
-  - Consolidated kubeconfig (1 per cluster instead of dozens of duplicates)
-  - Timestamped files with automatic cleanup (keeps 5 most recent)
-  - 91% reduction in kubeconfig duplication, 63% storage savings
-  - Backward compatible with old structure
-- **Bug Fixes**:
-  - Fixed TMC authentication prompts hanging (removed stderr suppression)
-  - Fixed BOLD variable error in upgrade script
-- **File Retention**: Automatic cleanup keeps 5 most recent files per type
-- **Zero Migration Required**: Old directories preserved, automatic transition
-
-## What's New in v3.5
-
-- **Management Cluster Discovery**: Dynamic cluster discovery for `k8s-ops-cmd.sh`
-  - New `-m <environment>` flag to discover clusters from TMC management clusters
-  - No need to maintain `clusters.conf` for dynamic environments
-  - Automatic environment detection (prod-1, uat-2, system-3, etc.)
-  - 12-hour caching for discovered clusters (consistent with v3.5 standards)
-  - Full integration with existing parallel/sequential execution modes
-- **Simplified Upgrade Script**: Complete rewrite of `k8s-cluster-upgrade.sh` (70% code reduction)
-  - Delegates to `k8s-health-check.sh` instead of duplicating health logic
-  - 350 lines vs 1200 lines in v3.4 - cleaner, more maintainable
-  - Same functionality, less code to maintain
-- **Standardized Cache Expiry**: All caches now use consistent 12-hour expiry
-
-## What's New in v3.4
-
-- **Batch Parallel Execution (Default)**: All scripts now run in parallel batches of 6 clusters by default
-  - `--batch-size N` option to customize batch size
-  - `--sequential` option for one-at-a-time processing
-  - TMC contexts prepared sequentially, then clusters processed in parallel batches
-- **Automated Cluster Upgrade**: New `k8s-cluster-upgrade.sh` with health-gated upgrades
-  - PRE-upgrade health validation (HEALTHY=auto, WARNINGS=prompt, CRITICAL=abort)
-  - TMC-based upgrade execution with progress monitoring
-  - POST-upgrade health comparison with detailed reports
-- **Multi-Cluster Ops Command**: New `k8s-ops-cmd.sh` for running commands across all clusters
-  - Parallel batch execution for faster results
-  - Formatted output to terminal and file
-  - Reuses existing TMC context/kubeconfig caching
-
-## What's New in v3.3
-
-- **Unified Script**: Merged PRE and POST scripts into single `k8s-health-check.sh` with `--mode` flag
-- **Centralized Health Logic**: New `lib/health.sh` module for all health calculations
-- **Test Suite**: Added `tests/test-grep-patterns.sh` for pattern validation
-- **Reduced Code Duplication**: ~500 fewer lines of code to maintain
-- **Legacy Scripts**: Old scripts moved to `Archive/v3.2/` for backwards compatibility
+A suite of three scripts for automated Kubernetes cluster health validation, upgrades, and multi-cluster operations through Tanzu Mission Control (TMC) integration.
 
 ---
 
-## Requirements
-
-### Prerequisites
+## Prerequisites
 
 | Requirement | Description | Verification |
 |-------------|-------------|--------------|
 | **Tanzu CLI** | VMware Tanzu CLI with TMC plugin | `tanzu version` |
 | **kubectl** | Kubernetes command-line tool | `kubectl version --client` |
 | **jq** | JSON processor for parsing | `jq --version` |
-| **Bash** | Bash shell (v4.0+) | `bash --version` |
+| **Bash 4.0+** | Bash shell with associative arrays | `bash --version` |
 | **TMC Access** | TMC Self-Managed credentials | Valid username/password |
 
-### Installation
+---
+
+## Quick Start
 
 ```bash
-# Verify all prerequisites
-tanzu version
-kubectl version --client
-jq --version
+# 1. Edit TMC endpoints (one-time)
+vi lib/tmc-context.sh
+# Set NON_PROD_DNS and PROD_DNS on lines 7-8
 
-# Install jq if missing:
-# Ubuntu/Debian: sudo apt-get install jq
-# RHEL/CentOS:   sudo yum install jq
-# macOS:         brew install jq
-# Windows:       choco install jq
+# 2. Create cluster list
+cat > clusters.conf << EOF
+prod-workload-01
+prod-workload-02
+uat-system-01
+EOF
+
+# 3. Make scripts executable
+chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
+
+# 4. Run first health check
+./k8s-health-check.sh --mode pre
 ```
 
-### Cluster Naming Convention (Required)
+---
 
-Your clusters MUST follow these naming patterns:
+## Configuration
+
+### TMC Endpoint Setup
+
+Edit `lib/tmc-context.sh` (lines 7-8):
+
+```bash
+NON_PROD_DNS="your-nonprod-tmc.example.com"
+PROD_DNS="your-prod-tmc.example.com"
+```
+
+### Cluster List (`clusters.conf`)
+
+One cluster name per line:
+
+```
+prod-workload-01
+prod-workload-02
+uat-system-01
+dev-system-01
+```
+
+### Cluster Naming Convention
+
+Cluster names determine the TMC context automatically:
 
 | Pattern | Environment | TMC Context |
 |---------|-------------|-------------|
@@ -94,193 +73,124 @@ Your clusters MUST follow these naming patterns:
 | `*-uat-[1-4]` | Non-production | tmc-sm-nonprod |
 | `*-system-[1-4]` | Non-production | tmc-sm-nonprod |
 
-**Examples:**
-- `workload-prod-01` → Production
-- `app-uat-02` → Non-production
-- `dev-system-01` → Non-production
+Examples: `workload-prod-01` (prod), `app-uat-02` (nonprod), `dev-system-01` (nonprod)
 
-### Configuration (One-Time Setup)
+### Environment Variables
 
-**1. Set TMC Endpoints** - Edit `lib/tmc-context.sh`:
-```bash
-NON_PROD_DNS="your-nonprod-tmc.example.com"  # Line 7
-PROD_DNS="your-prod-tmc.example.com"          # Line 8
-```
-
-**2. Create clusters.conf** - List your cluster names:
-```bash
-# clusters.conf
-prod-workload-01
-prod-workload-02
-uat-system-01
-dev-system-01
-```
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `TMC_SELF_MANAGED_USERNAME` | TMC username | No (prompts if not set) |
+| `TMC_SELF_MANAGED_PASSWORD` | TMC password | No (prompts if not set) |
+| `DEBUG` | Set to `on` for verbose output | No |
 
 ---
 
-## Execution
+## Script 1: Health Check (`k8s-health-check.sh`)
 
-### Quick Start (v3.4 Unified Script)
+Captures comprehensive cluster state before and after changes. Runs 18 health check modules and produces reports with HEALTHY/WARNINGS/CRITICAL status.
 
-```bash
-# Make script executable
-chmod +x k8s-health-check.sh
+### Usage & Options
 
-# Run PRE-change health check (before maintenance)
-./k8s-health-check.sh --mode pre
-
-# Perform your maintenance/upgrade...
-
-# Run POST-change health check (after maintenance)
-./k8s-health-check.sh --mode post
-
-# For faster execution with multiple clusters, use parallel mode
-./k8s-health-check.sh --mode pre --parallel
-./k8s-health-check.sh --mode post --parallel
+```
+./k8s-health-check.sh --mode pre|post [options] [clusters.conf] [pre-results-dir]
 ```
 
-### PRE-Change Health Check
+| Option | Description |
+|--------|-------------|
+| `--mode pre\|post` | Check mode (required) |
+| `-c, --cluster NAME` | Single cluster (no clusters.conf needed) |
+| `--sequential` | One cluster at a time (default: parallel) |
+| `--batch-size N` | Clusters per parallel batch (default: 6) |
+| `--cache-status` | Show cache status |
+| `--clear-cache` | Clear all cached data |
+
+### Examples
 
 ```bash
-# Default clusters.conf
+# PRE-change baseline (parallel, 6 clusters at a time)
 ./k8s-health-check.sh --mode pre
 
-# Custom config file
-./k8s-health-check.sh --mode pre ./my-clusters.conf
+# Single cluster health check
+./k8s-health-check.sh --mode pre -c prod-workload-01
+
+# POST-change with comparison to latest PRE
+./k8s-health-check.sh --mode post
+
+# POST-change for single cluster
+./k8s-health-check.sh --mode post -c prod-workload-01
+
+# POST with specific PRE results directory
+./k8s-health-check.sh --mode post ./clusters.conf ./health-check-results/pre-20260128_120000
+
+# Custom batch size
+./k8s-health-check.sh --mode pre --batch-size 10
+
+# Sequential execution
+./k8s-health-check.sh --mode pre --sequential
 
 # With debug output
 DEBUG=on ./k8s-health-check.sh --mode pre
 
-# With credentials in environment (no prompts)
-TMC_SELF_MANAGED_USERNAME=myuser \
-TMC_SELF_MANAGED_PASSWORD=mypass \
-./k8s-health-check.sh --mode pre
+# With credentials in environment
+TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass ./k8s-health-check.sh --mode pre
 ```
 
-### POST-Change Health Check (with comparison)
+### Health Status Classification
 
-```bash
-# Use latest PRE results (default)
-./k8s-health-check.sh --mode post
+| Status | Criteria | Action |
+|--------|----------|--------|
+| **CRITICAL** | Nodes NotReady > 0 OR Pods CrashLoopBackOff > 0 | Investigate immediately |
+| **WARNINGS** | Pods Pending > 0, Pods Unaccounted > 0, Deployments/DaemonSets/StatefulSets NotReady > 0, PVCs NotBound > 0, Helm Failed > 0 | Monitor, may resolve |
+| **HEALTHY** | None of the above | No action needed |
 
-# Custom config file + latest PRE results
-./k8s-health-check.sh --mode post ./clusters.conf
+**Pods Unaccounted** = Total - Running - Completed - CrashLoop - Pending. Catches pods in unexpected states (Failed, Unknown, ImagePullBackOff).
 
-# Compare with specific older PRE results
-./k8s-health-check.sh --mode post ./health-check-results/pre-20260128_120000
+### PRE vs POST Comparison
 
-# Both custom config and specific PRE results (either order works)
-./k8s-health-check.sh --mode post ./clusters.conf ./health-check-results/pre-20260128_120000
-./k8s-health-check.sh --mode post ./health-check-results/pre-20260128_120000 ./clusters.conf
+POST mode compares current state with PRE baseline:
 
-# With debug output
-DEBUG=on ./k8s-health-check.sh --mode post
+1. Parses PRE report metrics
+2. Collects current POST metrics
+3. Calculates deltas for health indicators
+4. Generates comparison table with `[OK]`, `[WORSE]`, `[BETTER]` status
+5. Produces plain-English summary
+6. Final verdict: **PASSED** / **WARNINGS** / **FAILED**
+
 ```
+Metric                    PRE      POST     DELTA    STATUS
+------------------------- -------- -------- -------- --------
+Nodes Total                      5        5        0     [OK]
+Nodes NotReady                   0        1       +1  [WORSE]
+Pods Running                   145      140       -5  [WORSE]
+Pods CrashLoopBackOff            0        2       +2  [WORSE]
 
-### Parallel Execution (Default in v3.4)
-
-All scripts now run in **parallel batches of 6 clusters by default** for faster processing.
-
-```bash
-# PRE-check (parallel by default, 6 clusters at a time)
-./k8s-health-check.sh --mode pre
-
-# POST-check (parallel by default)
-./k8s-health-check.sh --mode post
-
-# Custom batch size (10 clusters at a time)
-./k8s-health-check.sh --mode pre --batch-size 10
-
-# Sequential execution (one cluster at a time)
-./k8s-health-check.sh --mode pre --sequential
-```
-
-**How it works:**
-1. TMC contexts are prepared sequentially first (to avoid race conditions)
-2. Clusters are processed in batches (default: 6 at a time)
-3. Each batch completes before the next batch starts
-4. Results are collected and displayed at the end
-
-**When to use sequential (`--sequential`):**
-- Debugging issues with specific clusters
-- When you want to see detailed progress per cluster
-- Single cluster checks
-
-**Customizing batch size (`--batch-size N`):**
-- Increase for faster execution on powerful machines
-- Decrease if encountering resource constraints
-
-### Cache Management
-
-```bash
-# View cache status
-./k8s-health-check.sh --cache-status
-
-# Clear all cached data
-./k8s-health-check.sh --clear-cache
-```
-
-### Running Tests
-
-```bash
-# Run grep pattern validation tests
-./tests/test-grep-patterns.sh
+RESULT: FAILED - 2 CRITICAL issue(s), 1 warning(s)
 ```
 
 ---
 
-## Automated Cluster Upgrade (v3.5)
+## Script 2: Cluster Upgrade (`k8s-cluster-upgrade.sh`)
 
-Simple orchestration script that delegates health checks to `k8s-health-check.sh` for clean, maintainable code.
+Orchestrates cluster upgrades with PRE/POST health checks and progress monitoring. Delegates health check logic to `k8s-health-check.sh`.
 
-### Upgrade Workflow
+### Usage & Options
 
 ```
-1. Run PRE-upgrade health check (full output displayed)
-                    │
-                    ▼
-2. Prompt: "Do you want to upgrade [cluster]? (Y/N)"
-                    │
-                    ▼
-3. Execute TMC upgrade command (--latest)
-                    │
-                    ▼
-4. Monitor progress every 2 minutes
-   - Display: [elapsed] Phase: X | Version: Y | Health: Z
-   - Dynamic timeout: nodes × 5 min/node
-                    │
-                    ▼
-5. Display completion message with new version
-                    │
-                    ▼
-6. Run POST-upgrade health check with PRE vs POST comparison
+./k8s-cluster-upgrade.sh [options] [clusters.conf]
 ```
 
-### Key Features
+| Option | Description |
+|--------|-------------|
+| `-c CLUSTER` | Upgrade a single cluster |
+| `--parallel` | Run upgrades in parallel batches |
+| `--batch-size N` | Clusters per batch in parallel mode (default: 6) |
+| `--timeout-multiplier N` | Minutes per node for timeout (default: 5) |
+| `--dry-run` | Show what would be done without executing |
 
-- **No Code Duplication**: Delegates to existing `k8s-health-check.sh` script
-- **User Confirmation**: Explicit approval required before each upgrade
-- **Dynamic Timeout**: Calculated as number of nodes × 5 minutes per node
-- **Real-time Monitoring**: Progress updates every 2 minutes
-- **Automatic Comparison**: POST check automatically compares with PRE results
-
-### Timeout Calculation
-
-| Nodes | Default Timeout | Custom (10 min/node) |
-|-------|----------------|---------------------|
-| 3 nodes | 15 minutes | 30 minutes |
-| 5 nodes | 25 minutes | 50 minutes |
-| 10 nodes | 50 minutes | 100 minutes |
-
-Formula: `timeout = node_count × timeout_multiplier`
-
-### Usage
+### Examples
 
 ```bash
-# Make script executable
-chmod +x k8s-cluster-upgrade.sh
-
-# Default: Use ./clusters.conf
+# Default: Use ./clusters.conf (sequential)
 ./k8s-cluster-upgrade.sh
 
 # Single cluster upgrade
@@ -289,386 +199,302 @@ chmod +x k8s-cluster-upgrade.sh
 # Multiple clusters with custom config
 ./k8s-cluster-upgrade.sh ./my-clusters.conf
 
-# Custom timeout multiplier (default: 5 min/node)
+# Parallel batch upgrades (6 at a time)
+./k8s-cluster-upgrade.sh --parallel
+
+# Parallel with custom batch size
+./k8s-cluster-upgrade.sh --parallel --batch-size 3
+
+# Custom timeout (10 minutes per node)
 ./k8s-cluster-upgrade.sh -c uat-system-01 --timeout-multiplier 10
 
-# Dry run (shows what would be done)
-./k8s-cluster-upgrade.sh -c my-cluster --dry-run
+# Dry run
+./k8s-cluster-upgrade.sh -c prod-workload-01 --dry-run
 ```
 
-### Upgrade Output Structure (v3.6+)
+### Upgrade Workflow
 
-**New Structure:**
-```
-~/k8s-health-check/output/cluster-name/upgrade/
-├── pre-hcr-YYYYMMDD_HHMMSS.txt        # PRE health check copy
-├── upgrade-log-YYYYMMDD_HHMMSS.txt    # Upgrade execution log
-└── post-hcr-YYYYMMDD_HHMMSS.txt       # POST health check copy
-```
-
-**Note**: Comparison reports stay in `h-c-r/` directory (no duplication)
-
-### Example Monitoring Output
+**Sequential (default):**
 
 ```
-[  2 min] Phase: UPGRADING    | Version: v1.28.2 | Health: HEALTHY
-[  4 min] Phase: UPGRADING    | Version: v1.28.2 | Health: HEALTHY
-[  6 min] Phase: UPGRADING    | Version: v1.29.0 | Health: HEALTHY
-[  8 min] Phase: READY        | Version: v1.29.0 | Health: HEALTHY
-
-Upgrade completed successfully!
-  Cluster: prod-workload-01
-  Version: v1.29.0
-  Health: HEALTHY
-  Duration: 8 minutes
+For each cluster:
+  1. PRE health check (full output) → 2. User prompt (Y/N) → 3. Upgrade
+  → 4. Monitor every 2 min → 5. POST health check with comparison
 ```
+
+**Parallel (`--parallel` flag):**
+
+```
+For each batch of N clusters:
+  1. PRE health check + prompt per cluster (sequential within batch)
+  2. Trigger upgrades for confirmed clusters
+  3. Monitor all in parallel (logs to files, no terminal output)
+  4. POST health check runs per-cluster as each completes
+  5. Batch summary displayed on terminal
+```
+
+### Monitoring
+
+Two monitoring methods:
+
+- **kubectl-based** (preferred): Direct cluster access, per-node kubelet version verification, real-time. Success requires: API version changed AND all nodes Ready AND all nodes upgraded.
+- **TMC-based** (fallback): Via TMC API when kubeconfig unavailable, cluster-level phase/version only.
+
+### Timeout Calculation
+
+| Nodes | Default (5 min/node) | Custom (10 min/node) |
+|-------|---------------------|---------------------|
+| 3 | 15 minutes | 30 minutes |
+| 5 | 25 minutes | 50 minutes |
+| 10 | 50 minutes | 100 minutes |
 
 ---
 
-## Multi-Cluster Ops Command (v3.5)
+## Script 3: Multi-Cluster Operations (`k8s-ops-cmd.sh`)
 
-The `k8s-ops-cmd.sh` script executes commands across all clusters in parallel. Now supports dynamic cluster discovery from TMC management clusters.
+Executes commands across multiple clusters with parallel batch execution.
 
-### Usage (File-based Mode)
+### Usage & Options
+
+```
+./k8s-ops-cmd.sh [options] "<command>" [clusters.conf]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-c, --cluster NAME` | Run on a single cluster |
+| `-m, --management-cluster ENV` | Discover clusters from TMC management cluster |
+| `--timeout SEC` | Command timeout in seconds (default: 30) |
+| `--sequential` | One cluster at a time (default: parallel) |
+| `--batch-size N` | Clusters per batch (default: 6) |
+| `--output-only` | Minimal terminal output, save to file |
+
+`-c`, `-m`, and config file are mutually exclusive.
+
+### Examples
 
 ```bash
-# Make script executable
-chmod +x k8s-ops-cmd.sh
+# Single cluster
+./k8s-ops-cmd.sh -c prod-workload-01 "kubectl get nodes"
 
-# Get Contour version on all clusters
-./k8s-ops-cmd.sh "kubectl get deploy -n projectcontour contour -o jsonpath='{.spec.template.spec.containers[0].image}'"
-
-# Check cert-manager version
-./k8s-ops-cmd.sh "helm list -n cert-manager -o json | jq -r '.[0].chart'"
-
-# Get node count per cluster
+# Get node count across all clusters
 ./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
 
 # Check Kubernetes version
 ./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
 
-# Get Antrea pod count
-./k8s-ops-cmd.sh "kubectl get pods -n kube-system -l app=antrea --no-headers | wc -l"
+# Management cluster discovery
+./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes"
 
-# With custom config and timeout
+# Custom config and timeout
 ./k8s-ops-cmd.sh --timeout 60 "kubectl get pods -A" ./my-clusters.conf
 
-# Sequential execution (one cluster at a time)
+# Sequential execution
 ./k8s-ops-cmd.sh --sequential "kubectl get nodes"
 
-# Minimal terminal output (results saved to file only)
-./k8s-ops-cmd.sh --output-only "kubectl get nodes"
+# Custom batch size
+./k8s-ops-cmd.sh --batch-size 10 "kubectl get nodes"
 ```
 
-### Management Cluster Discovery (Dynamic Cluster Selection - v3.5)
+### Management Cluster Discovery (`-m` flag)
 
-Instead of maintaining `clusters.conf`, you can dynamically discover clusters from a TMC management cluster using the `-m` flag.
+Dynamically discovers clusters from TMC management cluster instead of using `clusters.conf`.
 
-**Usage:**
+Supported environments: `prod-1`, `prod-2`, `prod-3`, `prod-4`, `uat-2`, `uat-4`, `system-1`, `system-3`
+
 ```bash
-# Execute command on all clusters in prod-1 management cluster
 ./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes --no-headers | wc -l"
-
-# Check Kubernetes version across uat-2 clusters
-./k8s-ops-cmd.sh -m uat-2 "kubectl version --short 2>/dev/null | grep Server"
-
-# Discovery with sequential execution
-./k8s-ops-cmd.sh -m system-3 --sequential "kubectl get nodes"
-
-# Custom batch size with discovery
-./k8s-ops-cmd.sh -m prod-1 --batch-size 10 "kubectl get pods -A"
-
-# Discovery with custom timeout
-./k8s-ops-cmd.sh -m prod-1 --timeout 60 "helm list -A"
 ```
-
-**Supported Environments:**
-- `prod-1`, `prod-2`, `prod-3`, `prod-4` (Production)
-- `uat-2`, `uat-4` (UAT)
-- `system-1`, `system-3` (System)
-
-**How it works:**
-1. Script queries TMC for management cluster matching the environment
-2. Lists all clusters within that management cluster
-3. Executes your command on all discovered clusters
-4. Uses same parallel batch execution as file-based mode
-
-**Benefits:**
-- No need to maintain clusters.conf file
-- Always up-to-date with TMC cluster list
-- Ideal for dynamic environments where clusters are added/removed frequently
-- 12-hour caching for fast repeated execution
-
-### Sample Output
-
-```
-================================================================================
-  MULTI-CLUSTER OPS COMMAND
-================================================================================
-Command: kubectl get nodes --no-headers | wc -l
-Clusters: 5
-================================================================================
-
-[SUCCESS] svcs-k8s-1-prod-1
-────────────────────────────────────────
-5
-
-[SUCCESS] svcs-k8s-2-prod-2
-────────────────────────────────────────
-5
-
-[SUCCESS] app-k8s-1-uat-1
-────────────────────────────────────────
-3
-
-================================================================================
-  SUMMARY
-================================================================================
-Total Clusters: 5
-Successful: 5
-Failed: 0
-
-Results saved to: ops-results/ops-20260129_143000/output.txt
-================================================================================
-```
-
-### Ops Output Structure (v3.6+)
-
-**New Per-Cluster Structure:**
-```
-~/k8s-health-check/output/cluster-name/ops/
-├── ops-output-YYYYMMDD_HHMMSS.txt     # Formatted output
-└── ops-raw-YYYYMMDD_HHMMSS.txt        # Raw command output
-```
-
-**Benefits**: Easy to filter results per cluster, maintains complete history
 
 ---
 
-### Legacy Scripts (v3.2 Compatibility)
+## Architecture
 
-The old separate PRE/POST scripts are still available for backwards compatibility:
+### Script Architecture
 
-```bash
-# Located in Archive/v3.2/
-./Archive/v3.2/k8s-health-check-pre.sh
-./Archive/v3.2/k8s-health-check-post.sh
+```
+┌─────────────────────┐  ┌──────────────────────┐  ┌─────────────────┐
+│ k8s-health-check.sh │  │ k8s-cluster-upgrade. │  │ k8s-ops-cmd.sh  │
+│                     │  │ sh                   │  │                 │
+│ - PRE/POST modes    │  │ - Orchestrates       │  │ - Parallel exec │
+│ - 18 health modules │  │   upgrade workflow   │  │ - Any kubectl   │
+│ - Parallel batches  │  │ - Calls health-check │  │   command       │
+│ - Comparison report │  │ - Monitor progress   │  │ - Mgmt discovery│
+└────────┬────────────┘  └──────────┬───────────┘  └────────┬────────┘
+         │                          │                        │
+         └──────────────┬───────────┘────────────────────────┘
+                        │
+              ┌─────────┴─────────┐
+              │    lib/ modules   │
+              ├───────────────────┤
+              │ common.sh         │  Logging, colors, utilities
+              │ config.sh         │  Cluster list parsing, validation
+              │ tmc-context.sh    │  TMC context auto-creation
+              │ tmc.sh            │  TMC API, metadata, kubeconfig
+              │ health.sh         │  Health metrics & status calc
+              │ comparison.sh     │  PRE/POST comparison logic
+              │ sections/*.sh     │  18 health check modules
+              └───────────────────┘
+                        │
+              ┌─────────┴─────────┐
+              │  External Tools   │
+              ├───────────────────┤
+              │ tanzu CLI (TMC)   │
+              │ kubectl           │
+              │ jq                │
+              └───────────────────┘
 ```
 
-### Environment Variables
+### Execution Flow
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TMC_SELF_MANAGED_USERNAME` | TMC username | No (prompts if not set) |
-| `TMC_SELF_MANAGED_PASSWORD` | TMC password | No (prompts if not set) |
-| `DEBUG` | Enable verbose output (`on`/`off`) | No |
+1. **Initialize**: Parse arguments, check prerequisites
+2. **TMC Context**: Auto-detect environment from cluster name, create/reuse TMC context
+3. **Kubeconfig**: Fetch from TMC (cached for 12 hours)
+4. **Execute**: Run health checks / upgrade / command
+5. **Report**: Generate output files, display summary
+
+### Caching System
+
+All caches stored in `~/.k8s-health-check/` with consistent 12-hour expiry.
+
+| Cache Type | File | Purpose |
+|------------|------|---------|
+| Metadata | `metadata.cache` | Cluster management info from TMC |
+| Kubeconfig | `~/k8s-health-check/output/<cluster>/kubeconfig` | Cluster access credentials |
+| TMC Context | `context-timestamps.cache` | Context validity tracking |
+| Management Clusters | `management-clusters.cache` | TMC management cluster list |
+| Discovered Clusters | `mgmt-<name>-clusters.cache` | Clusters per management cluster |
+
+Cache flow: Check if valid (< 12 hours old) -> Reuse if valid -> Refresh from TMC if expired.
+
+Manage with: `./k8s-health-check.sh --cache-status` and `./k8s-health-check.sh --clear-cache`
+
+### TMC Context Management
+
+- Auto-detects environment from cluster naming pattern (e.g., `*-prod-*` -> production)
+- Creates TMC context with `tanzu context create` targeting the correct endpoint
+- Reuses existing contexts within 12-hour validity window
+- In parallel mode, contexts are prepared sequentially first to avoid race conditions
+
+### Parallel Batch Execution
+
+Default for health checks and ops commands. Opt-in for upgrades (`--parallel`).
+
+1. TMC contexts prepared sequentially (avoids race conditions)
+2. Clusters processed in batches (default: 6)
+3. Each batch launches background processes with PID tracking
+4. Batch completes (all PIDs waited) before next batch starts
+5. Results collected via marker-based format (`===CLUSTER_START===` / `===CLUSTER_END===`)
 
 ---
 
-## Explanation
+## Directory Structure
 
-### What the Script Does
-
-#### PRE-Change Mode (`--mode pre`)
-
-1. **Reads cluster configuration** from `clusters.conf`
-2. **Auto-detects environment** (prod/nonprod) from cluster naming pattern
-3. **Creates/reuses TMC context** for the appropriate environment
-4. **Auto-discovers cluster metadata** (management cluster, provisioner) from TMC
-5. **Fetches kubeconfig** from TMC for each cluster
-6. **Executes 18 health check modules** covering all aspects of cluster health
-7. **Generates health report** with status indicators (HEALTHY/WARNINGS/CRITICAL)
-8. **Saves results** to `health-check-results/pre-YYYYMMDD_HHMMSS/`
-9. **Updates "latest" directory** to point to most recent PRE results
-
-#### POST-Change Mode (`--mode post`)
-
-All steps from PRE-check, plus:
-
-10. **Locates PRE-change results** (uses "latest" directory by default, or specified path)
-11. **Parses PRE-change report** to extract baseline metrics
-12. **Compares PRE vs POST metrics** and calculates deltas
-13. **Generates comparison table** showing what changed
-14. **Creates plain English summary** explaining changes in layman's terms
-15. **Produces final verdict** (PASSED/WARNINGS/FAILED)
-
-### Health Check Modules (18 Sections)
-
-| # | Module | What It Checks |
-|---|--------|----------------|
-| 1 | Cluster Overview | Date, cluster info, Kubernetes version |
-| 2 | Node Status | Node health, conditions, taints, capacity |
-| 3 | Pod Status | Pod states, CrashLoopBackOff, Pending pods |
-| 4 | Workload Status | Deployments, DaemonSets, StatefulSets readiness |
-| 5 | Storage Status | PersistentVolumes, PVCs, StorageClasses |
-| 6 | Networking | Services, Ingress, HTTPProxy resources |
-| 7 | Antrea CNI | Antrea CNI pods and agent status |
-| 8 | Tanzu/VMware | Tanzu package installs, TMC agent pods |
-| 9 | Security/RBAC | PodDisruptionBudgets, RBAC resources |
-| 10 | Component Status | Control plane pods (apiserver, etcd, etc.) |
-| 11 | Helm Releases | Helm release status and versions |
-| 12 | Namespaces | Namespace listing and status |
-| 13 | Resource Quotas | ResourceQuotas and LimitRanges |
-| 14 | Events | Warning/Error events (filtered) |
-| 15 | Connectivity | HTTPProxy connectivity tests |
-| 16 | Images Audit | Container images in use |
-| 17 | Certificates | Certificate resources and expiration |
-| 18 | Cluster Summary | Quick health summary with indicators |
-
-### Health Status Classification
-
-| Status | Criteria | Action |
-|--------|----------|--------|
-| **CRITICAL** | Any of: Nodes NotReady > 0, Pods CrashLoopBackOff > 0 | Investigate immediately |
-| **WARNINGS** | Any of: Pods Pending > 0, Pods Unaccounted > 0, Deployments NotReady > 0, DaemonSets NotReady > 0, StatefulSets NotReady > 0, PVCs NotBound > 0, Helm Failed > 0 | Monitor, may resolve |
-| **HEALTHY** | None of the above conditions | No action needed |
-
-**Note on "Pods Unaccounted"**: Calculated as `Pods Total - Running - Completed - CrashLoop - Pending`. Catches pods in unexpected states (Failed, Unknown, ImagePullBackOff, etc.). If a pod is Completed (e.g., finished Job), it's accounted for and won't affect health status.
-
-### PRE vs POST Comparison Output
-
-```
-############################################################################
-#                       PRE vs POST COMPARISON                             #
-############################################################################
-
-Metric                    PRE      POST     DELTA    STATUS
-------------------------- ---------- ---------- ---------- ----------
-Nodes Total                        5          5          0       [OK]
-Nodes NotReady                     0          1         +1    [WORSE]
-Pods Running                     145        140         -5    [WORSE]
-Pods CrashLoopBackOff              0          2         +2    [WORSE]
-DaemonSets NotReady                0          0          0       [OK]
-StatefulSets NotReady              0          0          0       [OK]
-PVCs NotBound                      0          0          0       [OK]
-Helm Releases Failed               0          0          0       [OK]
-
-############################################################################
-#                      PLAIN ENGLISH SUMMARY                               #
-############################################################################
-
-What changed after the maintenance/upgrade:
-
-  * CRITICAL: 2 more pod(s) are now crashing (CrashLoopBackOff)
-  * WARNING: 1 node became NotReady
-  * INFO: 5 pods removed
-
-================================================================================
-  RESULT: FAILED - 2 CRITICAL issue(s), 1 warning(s)
-  ACTION: Investigate critical issues immediately before proceeding
-================================================================================
-```
-
-### Output Structure (v3.6+)
-
-**New Per-Cluster Structure:**
-```
-~/k8s-health-check/output/
-└── cluster-name/
-    ├── kubeconfig                              # Single cached file (12-hour expiry)
-    ├── h-c-r/                                  # Health Check Reports
-    │   ├── pre-hcr-YYYYMMDD_HHMMSS.txt
-    │   ├── post-hcr-YYYYMMDD_HHMMSS.txt
-    │   ├── comparison-hcr-YYYYMMDD_HHMMSS.txt
-    │   └── latest/                             # Latest PRE copy
-    │       └── pre-hcr-YYYYMMDD_HHMMSS.txt
-    ├── ops/                                    # Operations results
-    │   ├── ops-output-YYYYMMDD_HHMMSS.txt
-    │   └── ops-raw-YYYYMMDD_HHMMSS.txt
-    └── upgrade/                                # Upgrade logs
-        ├── pre-hcr-YYYYMMDD_HHMMSS.txt
-        ├── post-hcr-YYYYMMDD_HHMMSS.txt
-        └── upgrade-log-YYYYMMDD_HHMMSS.txt
-```
-
-**Key Features:**
-- **Per-cluster organization**: All data for a cluster in one location
-- **Timestamped files**: Sortable by date (`ls -lt` shows newest first)
-- **Automatic cleanup**: Keeps 5 most recent files per type
-- **Consolidated kubeconfig**: Single file shared across all operations
-- **No migration needed**: Old structure still accessible in `./health-check-results/`, `./upgrade-results/`, `./ops-results/`
-
-**Legacy Structure** (pre-v3.6, still readable for backward compatibility):
-```
-health-check-results/          # Old timestamp-based structure
-├── latest/
-├── pre-YYYYMMDD_HHMMSS/
-└── post-YYYYMMDD_HHMMSS/
-```
-
-### Caching
-
-| Cache Type | Location | Expiry |
-|------------|----------|--------|
-| Metadata | `~/.k8s-health-check/metadata.cache` | 12 hours |
-| Kubeconfig (v3.6+) | `~/k8s-health-check/output/<cluster>/kubeconfig` | 12 hours |
-| Kubeconfig (legacy) | `~/.k8s-health-check/kubeconfigs/` | 12 hours |
-| TMC Context | `~/.k8s-health-check/context-timestamps.cache` | 12 hours |
-| Management Clusters | `~/.k8s-health-check/management-clusters.cache` | 12 hours |
-| Discovered Clusters | `~/.k8s-health-check/mgmt-<name>-clusters.cache` | 12 hours |
-
-**Cache Benefits:**
-- Reduces TMC API calls for better performance
-- 12-hour expiry ensures fresh data during upgrades
-- Automatic refresh when cache expires
-- Can be manually cleared with `--clear-cache` flag
-- **v3.6**: Consolidated kubeconfig eliminates duplicates (1 per cluster)
-
----
-
-## Project Structure
+### Script Files
 
 ```
 k8-health-check/
-├── k8s-health-check.sh           # Unified health check script (v3.3)
-├── k8s-cluster-upgrade.sh        # Automated cluster upgrade (v3.5 - simplified)
-├── k8s-ops-cmd.sh                # Multi-cluster ops command (v3.5 - discovery support)
-├── clusters.conf                  # Cluster configuration file
-├── README.md                      # This documentation
-├── RELEASE.md                     # Release notes and changelog
-├── TO-DO.md                       # Future enhancements
+├── k8s-health-check.sh          # Health check script (PRE/POST modes)
+├── k8s-cluster-upgrade.sh       # Upgrade orchestration (sequential/parallel)
+├── k8s-ops-cmd.sh               # Multi-cluster command execution
+├── clusters.conf                # Cluster configuration (one per line)
+├── README.md                    # This documentation
+├── RELEASE.md                   # Release notes and changelog
+├── CLAUDE.md                    # AI assistant instructions
 │
-├── lib/                           # Library modules
-│   ├── common.sh                  # Shared utilities & logging
-│   ├── config.sh                  # Configuration parser (v3.5 - discovery functions)
-│   ├── health.sh                  # Health calculations (v3.3)
-│   ├── tmc-context.sh             # TMC context auto-creation (v3.5 - env flags)
-│   ├── tmc.sh                     # TMC integration & auto-discovery (v3.5 - mgmt clusters)
-│   ├── comparison.sh              # PRE/POST comparison logic
-│   │
-│   └── sections/                  # Health check modules (18 sections)
+├── lib/                         # Library modules
+│   ├── common.sh                # Logging, colors, utilities
+│   ├── config.sh                # Config parsing, cluster list functions
+│   ├── tmc-context.sh           # TMC context auto-creation
+│   ├── tmc.sh                   # TMC integration, metadata, kubeconfig
+│   ├── health.sh                # Health metrics collection & status
+│   ├── comparison.sh            # PRE/POST comparison logic
+│   └── sections/                # 18 health check modules
 │       ├── 01-cluster-overview.sh
 │       ├── 02-node-status.sh
 │       ├── ...
 │       └── 18-cluster-summary.sh
 │
-├── tests/                         # Test scripts (v3.3)
-│   └── test-grep-patterns.sh      # Pattern validation tests
+├── tests/                       # Test scripts
+│   └── test-grep-patterns.sh    # Pattern validation
 │
-├── health-check-results/          # Health check output (auto-created)
-├── upgrade-results/               # Upgrade results output (auto-created)
-├── ops-results/                   # Ops command output (auto-created)
-│
-└── Archive/                       # Archived versions
-    ├── v3.2/                      # Legacy PRE/POST scripts
-    │   ├── k8s-health-check-pre.sh
-    │   └── k8s-health-check-post.sh
-    └── ...
+└── Archive/                     # Archived versions
+    └── v3.2/                    # Legacy PRE/POST scripts
 ```
+
+### Output Structure (`~/k8s-health-check/output/`)
+
+Per-cluster organization with timestamped files:
+
+```
+~/k8s-health-check/output/
+└── cluster-name/
+    ├── kubeconfig                              # Cached credentials (12-hour expiry)
+    ├── h-c-r/                                  # Health Check Reports
+    │   ├── pre-hcr-YYYYMMDD_HHMMSS.txt
+    │   ├── post-hcr-YYYYMMDD_HHMMSS.txt
+    │   ├── comparison-hcr-YYYYMMDD_HHMMSS.txt
+    │   └── latest/                             # Latest PRE copy for POST comparison
+    │       └── pre-hcr-YYYYMMDD_HHMMSS.txt
+    ├── ops/                                    # Operations Command Results
+    │   ├── ops-output-YYYYMMDD_HHMMSS.txt
+    │   └── ops-raw-YYYYMMDD_HHMMSS.txt
+    └── upgrade/                                # Upgrade Results
+        ├── pre-hcr-YYYYMMDD_HHMMSS.txt
+        ├── post-hcr-YYYYMMDD_HHMMSS.txt
+        └── upgrade-log-YYYYMMDD_HHMMSS.txt
+```
+
+Automatic cleanup keeps 5 most recent files per type per directory. The `latest/` subdirectory keeps only 1 file (the most recent PRE report for POST comparison). Cleanup runs at the end of every script execution regardless of success/failure.
+
+---
+
+## Library Modules (`lib/`)
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `common.sh` | Shared utilities | `error()`, `success()`, `warning()`, `progress()`, `cleanup_old_files()` |
+| `config.sh` | Configuration | `get_cluster_list()`, `count_clusters()`, `load_configuration()` |
+| `tmc-context.sh` | TMC contexts | `ensure_tmc_context()`, `determine_environment()` |
+| `tmc.sh` | TMC integration | `discover_cluster_metadata()`, `fetch_kubeconfig_auto()` |
+| `health.sh` | Health metrics | `collect_health_metrics()`, `calculate_health_status()`, `generate_health_summary()` |
+| `comparison.sh` | PRE/POST | `generate_comparison_report()`, `parse_health_report()` |
+
+## Health Check Sections (`lib/sections/`)
+
+| # | File | What It Checks |
+|---|------|----------------|
+| 1 | `01-cluster-overview.sh` | Date, cluster info, Kubernetes version |
+| 2 | `02-node-status.sh` | Node health, conditions, taints, capacity |
+| 3 | `03-pod-status.sh` | Pod states, CrashLoopBackOff, Pending |
+| 4 | `04-workload-status.sh` | Deployments, DaemonSets, StatefulSets |
+| 5 | `05-storage-status.sh` | PersistentVolumes, PVCs, StorageClasses |
+| 6 | `06-networking.sh` | Services, Ingress, HTTPProxy |
+| 7 | `07-antrea-cni.sh` | Antrea CNI pods and agent status |
+| 8 | `08-tanzu-vmware.sh` | Tanzu packages, TMC agent pods |
+| 9 | `09-security-rbac.sh` | PodDisruptionBudgets, RBAC resources |
+| 10 | `10-component-status.sh` | Control plane pods (apiserver, etcd) |
+| 11 | `11-helm-releases.sh` | Helm release status and versions |
+| 12 | `12-namespaces.sh` | Namespace listing and status |
+| 13 | `13-resource-quotas.sh` | ResourceQuotas, LimitRanges |
+| 14 | `14-events.sh` | Warning/Error events (filtered) |
+| 15 | `15-connectivity.sh` | HTTPProxy connectivity tests |
+| 16 | `16-images-audit.sh` | Container images in use |
+| 17 | `17-certificates.sh` | Certificate resources and expiration |
+| 18 | `18-cluster-summary.sh` | Quick health summary with indicators |
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
-
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| "Cannot determine environment" | Cluster name doesn't match pattern | Rename cluster or edit `determine_environment()` |
-| "Cluster not found in TMC" | Cluster not registered or wrong name | Verify with `tanzu tmc cluster list` |
-| "Failed to create TMC context" | Wrong endpoint or credentials | Check `lib/tmc-context.sh` settings |
-| "Context expired" | TMC context older than 12 hours | Script auto-recreates, just re-run |
+| "Cannot determine environment" | Cluster name doesn't match pattern | Check naming convention above |
+| "Cluster not found in TMC" | Not registered or wrong name | Verify: `tanzu tmc cluster list` |
+| "Failed to create TMC context" | Wrong endpoint or credentials | Check `lib/tmc-context.sh` lines 7-8 |
+| "Context expired" | TMC context older than 12 hours | Auto-recreated on next run |
 | "Mode not specified" | Missing `--mode` flag | Use `--mode pre` or `--mode post` |
+| Script hangs at prompt | Credentials not provided | Set `TMC_SELF_MANAGED_USERNAME/PASSWORD` env vars |
 
 ### Debug Mode
 
@@ -679,29 +505,9 @@ DEBUG=on ./k8s-health-check.sh --mode pre 2>&1 | tee debug.log
 ### Running Tests
 
 ```bash
-# Validate grep patterns work correctly
 ./tests/test-grep-patterns.sh
-
-# Expected output: "All tests passed!"
+# Expected: "All tests passed!"
 ```
-
----
-
-## Migration from v3.2
-
-If upgrading from v3.2 (separate PRE/POST scripts):
-
-```bash
-# Old way (v3.2):
-./k8s-health-check-pre.sh
-./k8s-health-check-post.sh
-
-# New way (v3.3):
-./k8s-health-check.sh --mode pre
-./k8s-health-check.sh --mode post
-```
-
-The old scripts remain available in `Archive/v3.2/` for backwards compatibility.
 
 ---
 
@@ -711,23 +517,11 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| 3.6 | 2026-02-04 | Per-cluster output structure, consolidated kubeconfig, automatic cleanup, bug fixes |
+| 3.7 | 2026-02-05 | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes, documentation overhaul |
+| 3.6 | 2026-02-04 | Per-cluster output structure, consolidated kubeconfig, automatic cleanup |
 | 3.5 | 2026-02-03 | Management cluster discovery, simplified upgrade script, standardized caching |
-| 3.4 | 2026-01-29 | Automated cluster upgrade, multi-cluster ops command, parallel execution |
-| 3.3 | 2026-01-29 | Unified script with --mode flag, lib/health.sh module, test suite |
-| 3.2.6 | 2026-01-29 | Fixed grep -c pattern bug causing "0\n0" arithmetic errors |
+| 3.4 | 2026-01-29 | Parallel batch execution, automated upgrades, multi-cluster ops command |
+| 3.3 | 2026-01-29 | Unified script with `--mode` flag, `lib/health.sh`, test suite |
 | 3.2 | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |
-| 3.1.1 | 2026-01-27 | 12-hour context validity, removed prompts |
 | 3.1 | 2025-01-22 | Auto-discovery, auto-context, unified execution |
 | 3.0 | Initial | Basic health check functionality |
-
----
-
-## Support
-
-1. Review this README and [RELEASE.md](RELEASE.md)
-2. Enable DEBUG mode for verbose output
-3. Run `./tests/test-grep-patterns.sh` to validate patterns
-4. Check error messages in script output
-5. Verify prerequisites are met
-6. Test with single cluster first

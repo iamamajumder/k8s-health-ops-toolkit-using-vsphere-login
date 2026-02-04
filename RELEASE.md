@@ -1,5 +1,130 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.7 (2026-02-05)
+
+### Parallel Upgrade Mode
+
+Added `--parallel` flag to `k8s-cluster-upgrade.sh` for batch parallel cluster upgrades.
+
+**Key Features:**
+- **Batch parallel upgrades**: Process multiple clusters simultaneously with `--parallel` flag
+- **Customizable batch size**: `--batch-size N` (default: 6 clusters per batch)
+- **Sequential PRE + parallel monitoring**: PRE health checks and user prompts run sequentially within each batch, then upgrades are monitored in parallel
+- **Per-cluster POST health check**: Runs automatically when each cluster's upgrade completes
+- **Batch summaries**: Clear terminal output showing success/failure/timeout per cluster
+
+**Parallel Workflow:**
+1. TMC contexts prepared sequentially (avoid race conditions)
+2. For each batch:
+   - PRE health check + user prompt for each cluster (sequential)
+   - Trigger upgrades for all confirmed clusters
+   - Monitor all in parallel (output to log files only)
+   - POST health check runs per-cluster as each completes
+   - Batch summary displayed on terminal
+3. Overall summary at end
+
+**Usage:**
+```bash
+# Parallel batch upgrades (6 at a time)
+./k8s-cluster-upgrade.sh --parallel
+
+# Custom batch size
+./k8s-cluster-upgrade.sh --parallel --batch-size 3
+
+# Parallel with custom config
+./k8s-cluster-upgrade.sh --parallel ./my-clusters.conf
+```
+
+**Design Decisions:**
+- Default behavior unchanged (sequential) - `--parallel` is opt-in
+- User prompts are always sequential (one at a time on terminal)
+- Monitoring writes to log files only to avoid interleaved terminal output
+- Reuses existing `monitor_upgrade_progress()`, `run_pre_health_check()`, `run_post_health_check()`, and `execute_upgrade()` functions
+
+### Single Cluster Flag (`-c`) for Health Check and Ops-Cmd
+
+Added `-c`/`--cluster` flag to `k8s-health-check.sh` and `k8s-ops-cmd.sh` for running against a single cluster without requiring `clusters.conf`.
+
+**Usage:**
+```bash
+# Health check on single cluster
+./k8s-health-check.sh --mode pre -c prod-workload-01
+./k8s-health-check.sh --mode post -c prod-workload-01
+
+# Ops command on single cluster
+./k8s-ops-cmd.sh -c prod-workload-01 "kubectl get nodes"
+```
+
+**Details:**
+- Creates a temporary config file internally (same pattern as `k8s-cluster-upgrade.sh`)
+- Mutually exclusive with positional config file argument
+- In `k8s-ops-cmd.sh`, mutually exclusive with both `-m` flag and config file
+- POST mode with `-c` defaults to consolidated output structure for PRE results
+
+### Documentation Overhaul
+
+Complete rewrite of `README.md` with consolidated structure:
+- Unified documentation for all three scripts with full option tables
+- Architecture diagram showing script relationships and library modules
+- Caching system documentation with cache types and flow
+- Parallel execution details for all scripts
+- Complete directory structure for both script files and output
+- Library module reference table with key functions
+- Health check sections table (all 18 modules)
+- Troubleshooting guide with common issues
+
+### Bug Fixes: File Retention / Cleanup
+
+Fixed 4 bugs in the file retention system that caused old files to accumulate beyond the 5-file limit.
+
+#### 1. `latest/` Directory Accumulates Files Unbounded
+
+**Issue**: Each PRE health check run copied a new timestamped file into `h-c-r/latest/` without removing old copies. After N runs, N files accumulated unbounded.
+
+**Cause**: `cp "${latest_pre}" "${latest_dir}/"` on line 963 of `k8s-health-check.sh` added files without cleanup.
+
+**Fix**: Added `rm -f "${latest_dir}"/pre-hcr-*.txt` before copying the new file, ensuring only 1 file exists in `latest/` at any time.
+
+#### 2. Sequential Mode Never Updates `latest/`
+
+**Issue**: The "Update latest PRE results" block only iterated `PARALLEL_PROCESSED_CLUSTERS`, which is only populated in parallel mode. In sequential mode the array was empty, so `latest/` was never updated.
+
+**Fix**: Added an `else` branch that iterates clusters from config file via `get_cluster_list()` for sequential mode, with the same clear-and-copy logic.
+
+#### 3. `cleanup_old_files()` Doesn't Clean `latest/` Subdirectory
+
+**Issue**: The function only matched files directly inside the target directory (e.g., `h-c-r/`), never looking inside `h-c-r/latest/`. Even as a safety net, accumulated files in `latest/` were never cleaned.
+
+**Fix**: Added a second cleanup loop in `cleanup_old_files()` that scans the `latest/` subdirectory and keeps only 1 file per pattern (the most recent).
+
+#### 4. Upgrade Scripts Don't Always Run Cleanup
+
+**Issue**: `cleanup_old_files` was only called inside `upgrade_single_cluster()` on the success path. Failed/skipped/timed-out clusters and the entire parallel upgrade path never ran cleanup.
+
+**Fix**: Added `cleanup_old_files` loops at the end of both `upgrade_multiple_clusters()` and `upgrade_clusters_parallel()` to clean all clusters regardless of outcome.
+
+### Files Modified
+
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `k8s-cluster-upgrade.sh` | Major | Added `--parallel`, `--batch-size` flags; new functions: `upgrade_clusters_parallel()`, `monitor_and_post_upgrade()`, `prepare_upgrade_tmc_contexts()`; added cleanup to sequential and parallel multi-cluster functions; version bumped to 3.7 |
+| `k8s-health-check.sh` | Minor | Added `-c`/`--cluster` flag; fixed sequential mode `latest/` update; clear `latest/` before copy |
+| `k8s-ops-cmd.sh` | Minor | Added `-c`/`--cluster` flag with mutual exclusivity validation |
+| `lib/common.sh` | Minor | Fixed `cleanup_old_files()` to also clean `latest/` subdirectory (keep 1 file) |
+| `README.md` | Major | Complete rewrite with consolidated documentation |
+| `RELEASE.md` | Minor | Added v3.7 release notes |
+
+### Breaking Changes
+
+**None** - All existing functionality preserved:
+- Default upgrade behavior unchanged (sequential)
+- Health check and ops-cmd defaults unchanged
+- All existing command-line options work as before
+- Output structure unchanged
+- File retention now works correctly (may delete files that previously accumulated)
+
+---
+
 ## Version 3.6 (2026-02-04)
 
 ### Output Folder Restructuring

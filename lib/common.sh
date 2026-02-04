@@ -298,7 +298,7 @@ cleanup_old_files() {
     local target_dir="${base_path}/${subdir}"
     [[ ! -d "${target_dir}" ]] && return 0
 
-    # Get all timestamped files (exclude latest/ directory)
+    # File patterns to clean (timestamped files)
     local file_patterns=(
         "pre-hcr-*.txt"
         "post-hcr-*.txt"
@@ -307,6 +307,8 @@ cleanup_old_files() {
         "ops-raw-*.txt"
         "upgrade-log-*.txt"
     )
+
+    local cleaned=false
 
     for pattern in "${file_patterns[@]}"; do
         local files=($(ls -t "${target_dir}/${pattern}" 2>/dev/null))
@@ -318,11 +320,30 @@ cleanup_old_files() {
                 debug "Removing old file: $(basename "${file}")"
                 rm -f "${file}"
             done
+            cleaned=true
         fi
     done
 
-    if [[ ${file_count} -gt ${keep_count} ]]; then
-        debug "Cleanup completed for ${subdir}/ (kept ${keep_count} latest files)"
+    # Also clean the latest/ subdirectory - keep only 1 file (the most recent)
+    local latest_dir="${target_dir}/latest"
+    if [[ -d "${latest_dir}" ]]; then
+        for pattern in "${file_patterns[@]}"; do
+            local latest_files=($(ls -t "${latest_dir}/${pattern}" 2>/dev/null))
+            local latest_count=${#latest_files[@]}
+
+            if [[ ${latest_count} -gt 1 ]]; then
+                local latest_to_delete=("${latest_files[@]:1}")
+                for file in "${latest_to_delete[@]}"; do
+                    debug "Removing old latest file: $(basename "${file}")"
+                    rm -f "${file}"
+                done
+                cleaned=true
+            fi
+        done
+    fi
+
+    if [[ "${cleaned}" == "true" ]]; then
+        debug "Cleanup completed for ${subdir}/ (kept ${keep_count} latest files per type)"
     fi
 }
 

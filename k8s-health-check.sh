@@ -40,6 +40,7 @@ CHECK_MODE=""
 PRE_RESULTS_DIR=""
 PARALLEL_MODE="true"       # Parallel execution enabled by default
 BATCH_SIZE=6               # Default batch size for parallel execution
+SINGLE_CLUSTER=""          # Single cluster mode (via -c flag)
 
 #===============================================================================
 # Prerequisite Checks
@@ -81,6 +82,7 @@ Kubernetes Cluster Health Check (Unified Script v3.4)
 Usage:
   PRE-change:   $0 --mode pre [options] [clusters.conf]
   POST-change:  $0 --mode post [options] [clusters.conf] [pre-results-dir]
+  Single:       $0 --mode pre -c CLUSTER_NAME [options]
 
 Modes:
   --mode pre    Run PRE-change health check (capture baseline before changes)
@@ -118,6 +120,7 @@ Environment Variables:
 Options:
   -h, --help           Show this help message
   --mode pre|post      Specify check mode (required)
+  -c, --cluster NAME   Run health check on a single cluster (no clusters.conf needed)
   --sequential         Run health checks one at a time (default: parallel)
   --batch-size N       Number of clusters to process in parallel (default: 6)
   --cache-status       Show cache status
@@ -138,6 +141,10 @@ Examples:
 
   # Custom batch size (10 clusters at a time)
   $0 --mode pre --batch-size 10
+
+  # Single cluster health check (no clusters.conf needed)
+  $0 --mode pre -c prod-workload-01
+  $0 --mode post -c prod-workload-01
 
   # With debug output
   DEBUG=on $0 --mode pre
@@ -945,18 +952,40 @@ run_health_checks() {
     # PRE mode: Update "latest" files for each cluster
     if [[ "${mode}" == "pre" ]]; then
         progress "Updating latest PRE results..."
-        for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
-            local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
-            local latest_dir="${cluster_hcr_dir}/latest"
-            mkdir -p "${latest_dir}"
+        if [[ "${parallel}" == "true" ]]; then
+            for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
+                local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+                local latest_dir="${cluster_hcr_dir}/latest"
+                mkdir -p "${latest_dir}"
 
-            # Find the most recent pre-hcr file for this cluster
-            local latest_pre=$(ls -t "${cluster_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
-            if [[ -n "${latest_pre}" ]]; then
-                cp "${latest_pre}" "${latest_dir}/"
-                debug "Updated latest PRE for ${cluster_name}"
-            fi
-        done
+                # Clear old files from latest/ before copying new one
+                rm -f "${latest_dir}"/pre-hcr-*.txt
+
+                # Find the most recent pre-hcr file for this cluster
+                local latest_pre=$(ls -t "${cluster_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
+                if [[ -n "${latest_pre}" ]]; then
+                    cp "${latest_pre}" "${latest_dir}/"
+                    debug "Updated latest PRE for ${cluster_name}"
+                fi
+            done
+        else
+            # Sequential mode - update latest for each cluster in config
+            while IFS= read -r cluster_name; do
+                local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+                local latest_dir="${cluster_hcr_dir}/latest"
+                mkdir -p "${latest_dir}"
+
+                # Clear old files from latest/ before copying new one
+                rm -f "${latest_dir}"/pre-hcr-*.txt
+
+                # Find the most recent pre-hcr file for this cluster
+                local latest_pre=$(ls -t "${cluster_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
+                if [[ -n "${latest_pre}" ]]; then
+                    cp "${latest_pre}" "${latest_dir}/"
+                    debug "Updated latest PRE for ${cluster_name}"
+                fi
+            done < <(get_cluster_list "${CONFIG_FILE}")
+        fi
         success "Latest PRE results updated for all clusters"
     fi
 
@@ -1029,6 +1058,16 @@ parse_arguments() {
                 fi
                 shift
                 ;;
+            -c|--cluster)
+                shift
+                if [[ -n "$1" ]] && [[ ! "$1" =~ ^- ]]; then
+                    SINGLE_CLUSTER="$1"
+                else
+                    error "Cluster name required for -c/--cluster option"
+                    exit 1
+                fi
+                shift
+                ;;
             *)
                 # Positional arguments
                 break
@@ -1043,8 +1082,36 @@ parse_arguments() {
         show_usage
     fi
 
-    # Parse remaining positional arguments based on mode
-    if [[ "${CHECK_MODE}" == "pre" ]]; then
+    # Handle single cluster mode (-c flag)
+    if [[ -n "${SINGLE_CLUSTER}" ]]; then
+        # Validate mutual exclusivity with positional config file
+        if [[ $# -gt 0 ]] && [[ -f "$1" ]]; then
+            error "Cannot specify both -c CLUSTER and a config file"
+            exit 1
+        fi
+
+        # Create temporary config file with single cluster
+        local temp_config=$(mktemp)
+        echo "${SINGLE_CLUSTER}" > "${temp_config}"
+        config_file="${temp_config}"
+    fi
+
+    # Parse remaining positional arguments based on mode (skip if -c was used)
+    if [[ -n "${SINGLE_CLUSTER}" ]]; then
+        # Single cluster mode - config_file already set above
+        # For POST mode, set default PRE results path
+        if [[ "${CHECK_MODE}" == "post" ]]; then
+            pre_results_dir="${HOME}/k8s-health-check/output"
+            if [[ ! -d "${pre_results_dir}" ]]; then
+                pre_results_dir="${default_latest_dir}"
+                if [[ ! -d "${pre_results_dir}" ]]; then
+                    error "No PRE-change results found"
+                    error "Run the PRE-change health check first: $0 --mode pre -c ${SINGLE_CLUSTER}"
+                    exit 1
+                fi
+            fi
+        fi
+    elif [[ "${CHECK_MODE}" == "pre" ]]; then
         # PRE mode: only config_file argument
         [[ -n "$1" ]] && config_file="$1"
     else
