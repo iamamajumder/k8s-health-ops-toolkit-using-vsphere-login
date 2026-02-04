@@ -172,7 +172,7 @@ prompt_user_confirmation() {
     echo -e "${YELLOW}Do you want to upgrade ${BOLD}${cluster_name}${RESET}${YELLOW}?${RESET}"
     echo -n "Enter (Y/N): "
 
-    read -r response
+    read -r response </dev/tty
     case "${response}" in
         [Yy]|[Yy][Ee][Ss])
             return 0
@@ -360,26 +360,47 @@ monitor_upgrade_progress() {
             nodes_ready=$(echo "${nodes_ready}" | tr -d ' \n\r')
             nodes_ready=${nodes_ready:-0}
 
-            # Display progress
-            printf "[%3d min] Version: %-12s | Nodes: %d/%d Ready\n" \
-                "${elapsed}" "${current_version}" "${nodes_ready}" "${nodes_total}" | tee -a "${upgrade_log}"
+            # Check how many nodes are actually upgraded to new version
+            local nodes_upgraded=0
+            local node_versions=$(kubectl --kubeconfig="${cluster_kubeconfig}" get nodes -o json 2>/dev/null | \
+                jq -r '.items[].status.nodeInfo.kubeletVersion' 2>/dev/null || echo "")
 
-            # Check for completion: version changed AND all nodes ready
+            if [[ -n "${node_versions}" ]]; then
+                # Count nodes at new version (matching current API server version)
+                nodes_upgraded=$(echo "${node_versions}" | grep -c "${current_version}" || true)
+                nodes_upgraded=$(echo "${nodes_upgraded}" | tr -d ' \n\r')
+                nodes_upgraded=${nodes_upgraded:-0}
+            else
+                # Fallback if jq fails - set to 0 to prevent false success
+                nodes_upgraded=0
+            fi
+
+            # Display progress with node version upgrade tracking
+            printf "[%3d min] Version: %-12s | Nodes: %d/%d Ready | Upgraded: %d/%d\n" \
+                "${elapsed}" "${current_version}" "${nodes_ready}" "${nodes_total}" "${nodes_upgraded}" "${nodes_total}" | tee -a "${upgrade_log}"
+
+            # Check for completion: version changed AND all nodes ready AND all nodes upgraded
             if [[ "${current_version}" != "${pre_version}" && "${current_version}" != "unknown" ]]; then
                 if [[ ${nodes_ready} -eq ${nodes_total} && ${nodes_total} -gt 0 ]]; then
-                    echo "" | tee -a "${upgrade_log}"
-                    success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
-                    echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
-                    echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
-                    echo "  Post-upgrade version: ${current_version}" | tee -a "${upgrade_log}"
-                    echo "  Nodes ready: ${nodes_ready}/${nodes_total}" | tee -a "${upgrade_log}"
-                    echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
-                    echo "" | tee -a "${upgrade_log}"
+                    if [[ ${nodes_upgraded} -eq ${nodes_total} ]]; then
+                        # All conditions met - upgrade truly complete
+                        echo "" | tee -a "${upgrade_log}"
+                        success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
+                        echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
+                        echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
+                        echo "  Post-upgrade version: ${current_version}" | tee -a "${upgrade_log}"
+                        echo "  Nodes ready: ${nodes_ready}/${nodes_total}" | tee -a "${upgrade_log}"
+                        echo "  Nodes upgraded: ${nodes_upgraded}/${nodes_total}" | tee -a "${upgrade_log}"
+                        echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
+                        echo "" | tee -a "${upgrade_log}"
 
-                    # Save versions
-                    echo "${pre_version}" > "${output_dir}/.pre-version"
-                    echo "${current_version}" > "${output_dir}/.post-version"
-                    return 0
+                        # Save versions
+                        echo "${pre_version}" > "${output_dir}/.pre-version"
+                        echo "${current_version}" > "${output_dir}/.post-version"
+                        return 0
+                    else
+                        debug "Version changed but not all nodes upgraded yet (${nodes_upgraded}/${nodes_total} at ${current_version})"
+                    fi
                 else
                     debug "Version upgraded but waiting for all nodes to be ready (${nodes_ready}/${nodes_total})"
                 fi
