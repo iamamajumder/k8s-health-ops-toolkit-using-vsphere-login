@@ -203,12 +203,12 @@ process_cluster() {
         return 1
     fi
 
-    # Create cluster output directory
-    local cluster_output_dir="${output_base_dir}/${cluster_name}"
+    # Create cluster h-c-r directory (new structure)
+    local cluster_output_dir="${output_base_dir}/${cluster_name}/h-c-r"
     mkdir -p "${cluster_output_dir}"
 
-    # Fetch kubeconfig with auto-discovery
-    local kubeconfig_file="${cluster_output_dir}/kubeconfig"
+    # Fetch kubeconfig (consolidated storage - not in results dir)
+    local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
     if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}"; then
         error "Failed to fetch kubeconfig for ${cluster_name}, skipping"
         return 1
@@ -229,7 +229,8 @@ process_cluster() {
     # Run health check
     progress "Running ${mode}-change health check for ${cluster_name}..."
 
-    local report_file="${cluster_output_dir}/health-check-report.txt"
+    # New timestamped filename
+    local report_file="${cluster_output_dir}/${mode}-hcr-${timestamp}.txt"
 
     # Run health check with error handling
     local hc_exit_code=0
@@ -253,28 +254,39 @@ process_cluster() {
 
     # POST mode: Generate comparison report
     if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
-        local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
-        if [[ -d "${pre_cluster_dir}" ]]; then
-            local pre_report="${pre_cluster_dir}/health-check-report.txt"
-            if [[ -f "${pre_report}" ]]; then
-                progress "Generating comparison report..."
-                local comparison_file="${cluster_output_dir}/comparison-report.txt"
+        local pre_report=""
 
-                generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}"
+        # Try new structure first (consolidated)
+        local new_pre_latest="${pre_results_dir}/${cluster_name}/h-c-r/latest"
+        if [[ -d "${new_pre_latest}" ]]; then
+            pre_report=$(ls -t "${new_pre_latest}"/pre-hcr-*.txt 2>/dev/null | head -1)
+        fi
 
-                success "Comparison report generated: ${comparison_file}"
-
-                # Display full comparison report on CLI
-                echo ""
-                cat "${comparison_file}"
-                echo ""
-                echo "================================================================================"
-                echo ""
-            else
-                warning "PRE-change report not found for ${cluster_name}, skipping comparison"
+        # Fallback to old structure for backward compatibility
+        if [[ -z "${pre_report}" || ! -f "${pre_report}" ]]; then
+            local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
+            if [[ -f "${pre_cluster_dir}/health-check-report.txt" ]]; then
+                pre_report="${pre_cluster_dir}/health-check-report.txt"
             fi
+        fi
+
+        if [[ -f "${pre_report}" ]]; then
+            progress "Generating comparison report..."
+            # New timestamped filename
+            local comparison_file="${cluster_output_dir}/comparison-hcr-${timestamp}.txt"
+
+            generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}"
+
+            success "Comparison report generated: ${comparison_file}"
+
+            # Display full comparison report on CLI
+            echo ""
+            cat "${comparison_file}"
+            echo ""
+            echo "================================================================================"
+            echo ""
         else
-            warning "No PRE-change results found for ${cluster_name}, skipping comparison"
+            warning "PRE-change report not found for ${cluster_name}, skipping comparison"
         fi
     fi
 
@@ -296,12 +308,12 @@ process_cluster_parallel() {
 
     local status="SUCCESS"
 
-    # Create cluster output directory
-    local cluster_output_dir="${output_base_dir}/${cluster_name}"
+    # Create cluster h-c-r directory (new structure)
+    local cluster_output_dir="${output_base_dir}/${cluster_name}/h-c-r"
     mkdir -p "${cluster_output_dir}"
 
-    # Fetch kubeconfig with auto-discovery (TMC context already prepared)
-    local kubeconfig_file="${cluster_output_dir}/kubeconfig"
+    # Fetch kubeconfig (consolidated storage - TMC context already prepared)
+    local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
     if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
         {
             echo "===CLUSTER_START==="
@@ -328,8 +340,8 @@ process_cluster_parallel() {
         return 1
     fi
 
-    # Run health check
-    local report_file="${cluster_output_dir}/health-check-report.txt"
+    # Run health check with timestamped filename
+    local report_file="${cluster_output_dir}/${mode}-hcr-${timestamp}.txt"
 
     # Run health check with error handling
     local hc_exit_code=0
@@ -343,14 +355,27 @@ process_cluster_parallel() {
 
     # POST mode: Generate comparison report
     if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
-        local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
-        if [[ -d "${pre_cluster_dir}" ]]; then
-            local pre_report="${pre_cluster_dir}/health-check-report.txt"
-            if [[ -f "${pre_report}" ]]; then
-                local comparison_file="${cluster_output_dir}/comparison-report.txt"
-                # Generate comparison report (stdout/stderr suppressed but file still created)
-                generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}" 2>/dev/null
+        local pre_report=""
+
+        # Try new structure first (consolidated)
+        local new_pre_latest="${pre_results_dir}/${cluster_name}/h-c-r/latest"
+        if [[ -d "${new_pre_latest}" ]]; then
+            pre_report=$(ls -t "${new_pre_latest}"/pre-hcr-*.txt 2>/dev/null | head -1)
+        fi
+
+        # Fallback to old structure for backward compatibility
+        if [[ -z "${pre_report}" || ! -f "${pre_report}" ]]; then
+            local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
+            if [[ -f "${pre_cluster_dir}/health-check-report.txt" ]]; then
+                pre_report="${pre_cluster_dir}/health-check-report.txt"
             fi
+        fi
+
+        if [[ -f "${pre_report}" ]]; then
+            # New timestamped filename
+            local comparison_file="${cluster_output_dir}/comparison-hcr-${timestamp}.txt"
+            # Generate comparison report (stdout/stderr suppressed but file still created)
+            generate_comparison_report "${cluster_name}" "${pre_report}" "${report_file}" "${comparison_file}" 2>/dev/null
         fi
     fi
 
@@ -731,9 +756,9 @@ run_health_checks() {
         exit 1
     fi
 
-    # Create output directory
+    # Create output base directory (new consolidated structure)
     local timestamp=$(get_timestamp)
-    local output_base_dir="${SCRIPT_DIR}/health-check-results/${mode}-${timestamp}"
+    local output_base_dir="${HOME}/k8s-health-check/output"
     mkdir -p "${output_base_dir}"
 
     # Get cluster list
@@ -778,7 +803,10 @@ run_health_checks() {
 
             local comparison_found=false
             for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
-                local comparison_file="${output_base_dir}/${cluster_name}/comparison-report.txt"
+                # Find latest comparison file in new structure
+                local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+                local comparison_file=$(ls -t "${cluster_hcr_dir}"/comparison-hcr-*.txt 2>/dev/null | head -1)
+
                 if [[ -f "${comparison_file}" ]] && [[ -s "${comparison_file}" ]]; then
                     echo ""
                     cat "${comparison_file}"
@@ -788,15 +816,7 @@ run_health_checks() {
                     comparison_found=true
                 else
                     # Debug: show why comparison isn't displayed
-                    local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
-                    local pre_report="${pre_cluster_dir}/health-check-report.txt"
-                    if [[ ! -d "${pre_cluster_dir}" ]]; then
-                        warning "No PRE results directory found for ${cluster_name}: ${pre_cluster_dir}"
-                    elif [[ ! -f "${pre_report}" ]]; then
-                        warning "No PRE health report found for ${cluster_name}: ${pre_report}"
-                    elif [[ ! -f "${comparison_file}" ]]; then
-                        warning "Comparison report not generated for ${cluster_name}"
-                    fi
+                    warning "No comparison report found for ${cluster_name} in ${cluster_hcr_dir}"
                 fi
             done
 
@@ -871,28 +891,34 @@ run_health_checks() {
     echo ""
     echo -e "${CYAN}Results directory: ${NC}${output_base_dir}"
 
-    # PRE mode: Update "latest" directory
+    # PRE mode: Update "latest" files for each cluster
     if [[ "${mode}" == "pre" ]]; then
-        local latest_dir="${SCRIPT_DIR}/health-check-results/latest"
+        progress "Updating latest PRE results..."
+        for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
+            local cluster_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+            local latest_dir="${cluster_hcr_dir}/latest"
+            mkdir -p "${latest_dir}"
 
-        # Remove existing latest directory/symlink if exists
-        if [[ -L "${latest_dir}" ]]; then
-            rm -f "${latest_dir}"
-        elif [[ -d "${latest_dir}" ]]; then
-            rm -rf "${latest_dir}"
-        fi
+            # Find the most recent pre-hcr file for this cluster
+            local latest_pre=$(ls -t "${cluster_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
+            if [[ -n "${latest_pre}" ]]; then
+                cp "${latest_pre}" "${latest_dir}/"
+                debug "Updated latest PRE for ${cluster_name}"
+            fi
+        done
+        success "Latest PRE results updated for all clusters"
+    fi
 
-        # Create symlink to the new results
-        if ln -s "${output_base_dir}" "${latest_dir}" 2>/dev/null; then
-            success "Created symlink: latest -> $(basename "${output_base_dir}")"
-        else
-            # Fallback: copy directory for Windows compatibility
-            cp -r "${output_base_dir}" "${latest_dir}"
-            success "Created 'latest' directory copy"
-        fi
-
-        echo ""
-        echo -e "${CYAN}Quick access: ${NC}${latest_dir}"
+    # Run cleanup for each processed cluster
+    if [[ "${parallel}" == "true" ]]; then
+        for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
+            cleanup_old_files "${output_base_dir}/${cluster_name}" "h-c-r"
+        done
+    else
+        # Sequential mode - cleanup for clusters in config
+        while IFS= read -r cluster_name; do
+            cleanup_old_files "${output_base_dir}/${cluster_name}" "h-c-r"
+        done < <(get_cluster_list "${CONFIG_FILE}")
     fi
 
     echo ""
@@ -973,15 +999,23 @@ parse_arguments() {
     else
         # POST mode: config_file and/or pre_results_dir
         if [[ $# -eq 0 ]]; then
-            # No arguments - use defaults
-            pre_results_dir="${default_latest_dir}"
+            # No arguments - use new consolidated structure
+            # PRE results are now in ~/k8s-health-check/output/<cluster>/h-c-r/latest/
+            pre_results_dir="${HOME}/k8s-health-check/output"
+
+            # Check if new structure exists, fallback to old structure for backward compatibility
             if [[ ! -d "${pre_results_dir}" ]]; then
-                error "No PRE-change results found in 'latest' directory"
-                error "Run the PRE-change health check first: $0 --mode pre"
-                error "Or specify a PRE-results directory: $0 --mode post [clusters.conf] <pre-results-dir>"
-                exit 1
+                # Try old structure
+                pre_results_dir="${default_latest_dir}"
+                if [[ ! -d "${pre_results_dir}" ]]; then
+                    error "No PRE-change results found"
+                    error "Run the PRE-change health check first: $0 --mode pre"
+                    exit 1
+                fi
+                progress "Using PRE-change results from legacy structure: ${pre_results_dir}"
+            else
+                progress "Using PRE-change results from consolidated structure"
             fi
-            progress "Using latest PRE-change results from: ${pre_results_dir}"
         elif [[ $# -eq 1 ]]; then
             # Single argument - detect if it's a directory or file
             if [[ -d "$1" ]]; then

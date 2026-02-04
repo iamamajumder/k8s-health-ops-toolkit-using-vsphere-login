@@ -138,12 +138,16 @@ run_pre_health_check() {
     if "${SCRIPT_DIR}/k8s-health-check.sh" --mode pre "${temp_config}"; then
         rm -f "${temp_config}"
 
-        # Find the latest PRE results directory for this cluster
-        local latest_pre=$(find "${SCRIPT_DIR}/health-check-results" -type d -name "pre-*" | sort -r | head -1)
-        if [[ -n "${latest_pre}" && -d "${latest_pre}/${cluster_name}" ]]; then
-            # Copy PRE health check to upgrade results
-            cp "${latest_pre}/${cluster_name}/health-check-report.txt" "${output_dir}/pre-upgrade-health.txt"
-            echo "${latest_pre}" > "${output_dir}/.pre-results-path"
+        # Find the latest PRE results in new consolidated structure
+        local output_base_dir="${HOME}/k8s-health-check/output"
+        local pre_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+        local latest_pre=$(ls -t "${pre_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
+
+        if [[ -n "${latest_pre}" && -f "${latest_pre}" ]]; then
+            # Copy PRE health check to upgrade results with timestamped name
+            local timestamp=$(date '+%Y%m%d_%H%M%S')
+            cp "${latest_pre}" "${output_dir}/pre-hcr-${timestamp}.txt"
+            echo "${output_base_dir}" > "${output_dir}/.pre-results-path"
             success "PRE-upgrade health check completed"
             return 0
         else
@@ -223,7 +227,9 @@ execute_upgrade() {
     progress "Initiating upgrade for ${cluster_name}..."
     echo ""
 
-    local upgrade_log="${output_dir}/upgrade-log.txt"
+    # Timestamped upgrade log filename
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local upgrade_log="${output_dir}/upgrade-log-${timestamp}.txt"
 
     # Log upgrade command
     {
@@ -379,15 +385,19 @@ run_post_health_check() {
     if "${SCRIPT_DIR}/k8s-health-check.sh" --mode post "${temp_config}" "${pre_results_path}"; then
         rm -f "${temp_config}"
 
-        # Find the latest POST results directory for this cluster
-        local latest_post=$(find "${SCRIPT_DIR}/health-check-results" -type d -name "post-*" | sort -r | head -1)
-        if [[ -n "${latest_post}" && -d "${latest_post}/${cluster_name}" ]]; then
-            # Copy POST health check and comparison to upgrade results
-            cp "${latest_post}/${cluster_name}/health-check-report.txt" "${output_dir}/post-upgrade-health.txt"
-            if [[ -f "${latest_post}/${cluster_name}/comparison-report.txt" ]]; then
-                cp "${latest_post}/${cluster_name}/comparison-report.txt" "${output_dir}/comparison-report.txt"
-            fi
+        # Find the latest POST results in new consolidated structure
+        local output_base_dir="${HOME}/k8s-health-check/output"
+        local post_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
+        local latest_post=$(ls -t "${post_hcr_dir}"/post-hcr-*.txt 2>/dev/null | head -1)
+
+        if [[ -n "${latest_post}" && -f "${latest_post}" ]]; then
+            # Copy POST health check to upgrade results with timestamped name
+            local timestamp=$(date '+%Y%m%d_%H%M%S')
+            cp "${latest_post}" "${output_dir}/post-hcr-${timestamp}.txt"
+
+            # Comparison reports stay in h-c-r directory, no need to copy (avoid duplication)
             success "POST-upgrade health check completed"
+            success "Comparison report available in: ${post_hcr_dir}/"
             return 0
         else
             error "Could not find POST health check results for ${cluster_name}"
@@ -406,10 +416,10 @@ run_post_health_check() {
 upgrade_single_cluster() {
     local cluster_name="$1"
 
-    # Create output directory
+    # Create output directory (new consolidated structure)
     local timestamp=$(date '+%Y%m%d_%H%M%S')
-    local base_output_dir="${SCRIPT_DIR}/upgrade-results/upgrade-${timestamp}"
-    local output_dir="${base_output_dir}/${cluster_name}"
+    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_dir="${output_base_dir}/${cluster_name}/upgrade"
     mkdir -p "${output_dir}"
 
     print_section "Upgrading Cluster: ${cluster_name}"
@@ -493,6 +503,10 @@ upgrade_single_cluster() {
 
     # Success
     echo "SUCCESS" > "${output_dir}/status.txt"
+
+    # Cleanup old files
+    cleanup_old_files "${output_base_dir}/${cluster_name}" "upgrade"
+
     echo ""
     success "Cluster upgrade completed successfully for ${cluster_name}"
     echo ""

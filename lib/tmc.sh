@@ -167,26 +167,34 @@ discover_cluster_metadata() {
     return 0
 }
 
-# Fetch kubeconfig using auto-discovered metadata (with caching)
+# Fetch kubeconfig using auto-discovered metadata (consolidated storage)
 fetch_kubeconfig_auto() {
     local cluster_name="$1"
     local output_file="${2:-}"
 
-    # Check for cached kubeconfig first
-    local cached_kubeconfig="${KUBECONFIG_CACHE_DIR}/${cluster_name}.kubeconfig"
-    if [[ -f "${cached_kubeconfig}" ]]; then
-        local file_timestamp=$(stat -c %Y "${cached_kubeconfig}" 2>/dev/null || stat -f %m "${cached_kubeconfig}" 2>/dev/null || echo "0")
+    # Consolidated kubeconfig path (new structure)
+    local consolidated_path="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+
+    # Create cluster directory if not exists
+    mkdir -p "$(dirname "${consolidated_path}")" 2>/dev/null
+
+    # Check if consolidated kubeconfig exists and is valid (< 12 hours)
+    if [[ -f "${consolidated_path}" ]]; then
+        local file_timestamp=$(stat -c %Y "${consolidated_path}" 2>/dev/null || stat -f %m "${consolidated_path}" 2>/dev/null || echo "0")
         if is_cache_valid "${file_timestamp}" "${KUBECONFIG_CACHE_EXPIRY}"; then
-            debug "Using cached kubeconfig for ${cluster_name}" >&2
+            debug "Using consolidated kubeconfig for ${cluster_name}" >&2
             if [[ -n "${output_file}" ]]; then
-                cp "${cached_kubeconfig}" "${output_file}"
-                success "Kubeconfig loaded from cache for ${cluster_name}"
+                # If output_file is different from consolidated path, copy to requested location
+                if [[ "${output_file}" != "${consolidated_path}" ]]; then
+                    cp "${consolidated_path}" "${output_file}"
+                fi
+                success "Kubeconfig loaded from consolidated storage for ${cluster_name}"
             else
-                cat "${cached_kubeconfig}"
+                cat "${consolidated_path}"
             fi
             return 0
         else
-            debug "Cached kubeconfig expired for ${cluster_name}, refreshing..." >&2
+            debug "Consolidated kubeconfig expired for ${cluster_name}, refreshing..." >&2
         fi
     fi
 
@@ -201,18 +209,20 @@ fetch_kubeconfig_auto() {
     management=$(echo "${metadata}" | cut -d'|' -f1)
     provisioner=$(echo "${metadata}" | cut -d'|' -f2)
 
-    # Fetch kubeconfig using discovered metadata
-    if [[ -n "${output_file}" ]]; then
-        if fetch_kubeconfig "${cluster_name}" "${management}" "${provisioner}" "${output_file}"; then
-            # Cache the kubeconfig
-            cp "${output_file}" "${cached_kubeconfig}" 2>/dev/null
-            chmod 600 "${cached_kubeconfig}" 2>/dev/null
-            return 0
+    # Fetch kubeconfig using discovered metadata directly to consolidated location
+    if fetch_kubeconfig "${cluster_name}" "${management}" "${provisioner}" "${consolidated_path}"; then
+        chmod 600 "${consolidated_path}" 2>/dev/null
+
+        # If output_file specified and different from consolidated path, also copy there
+        if [[ -n "${output_file}" && "${output_file}" != "${consolidated_path}" ]]; then
+            cp "${consolidated_path}" "${output_file}"
         fi
-        return 1
-    else
-        fetch_kubeconfig "${cluster_name}" "${management}" "${provisioner}"
+
+        success "Kubeconfig fetched and cached for ${cluster_name}"
+        return 0
     fi
+
+    return 1
 }
 
 # Fetch kubeconfig via TMC (original function with output file support)

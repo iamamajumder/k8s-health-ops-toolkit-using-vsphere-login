@@ -133,15 +133,16 @@ execute_on_cluster() {
     local cluster_name="$1"
     local command="$2"
     local timeout_sec="$3"
-    local output_file="$4"
+    local raw_output_file="$4"
+    local timestamp="$5"
 
     local status="SUCCESS"
     local output=""
     local exit_code=0
 
-    # Create temp directory for this cluster's kubeconfig
-    local temp_dir=$(mktemp -d)
-    local kubeconfig_file="${temp_dir}/kubeconfig"
+    # Use consolidated kubeconfig location (no temp dir needed)
+    local output_base_dir="${HOME}/k8s-health-check/output"
+    local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
 
     # Setup TMC context and fetch kubeconfig
     if ! ensure_tmc_context "${cluster_name}" >/dev/null 2>&1; then
@@ -170,7 +171,8 @@ execute_on_cluster() {
         fi
     fi
 
-    # Write results to output file (atomic write)
+    # Write to both raw results file (for aggregated display) AND per-cluster file
+    # Raw results for aggregated display
     {
         echo "CLUSTER: ${cluster_name}"
         echo "STATUS: ${status}"
@@ -178,10 +180,29 @@ execute_on_cluster() {
         echo "OUTPUT:"
         echo "${output}"
         echo "---END---"
-    } >> "${output_file}"
+    } >> "${raw_output_file}"
 
-    # Cleanup
-    rm -rf "${temp_dir}"
+    # Per-cluster ops directory
+    local cluster_ops_dir="${output_base_dir}/${cluster_name}/ops"
+    mkdir -p "${cluster_ops_dir}"
+
+    # Save to per-cluster timestamped files
+    {
+        echo "==================================="
+        echo "Ops Command Execution"
+        echo "==================================="
+        echo "Cluster: ${cluster_name}"
+        echo "Command: ${command}"
+        echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Status: ${status}"
+        echo "Exit Code: ${exit_code}"
+        echo "==================================="
+        echo ""
+        echo "${output}"
+    } > "${cluster_ops_dir}/ops-output-${timestamp}.txt"
+
+    # Also save raw output
+    echo "${output}" > "${cluster_ops_dir}/ops-raw-${timestamp}.txt"
 
     return ${exit_code}
 }
@@ -196,6 +217,7 @@ run_parallel_with_list() {
     local timeout_sec="$3"
     local results_dir="$4"
     local batch_size="$5"
+    local timestamp="$6"
 
     # Convert cluster list to array
     local clusters=()
@@ -229,7 +251,7 @@ run_parallel_with_list() {
             local cluster="${clusters[$i]}"
             local display_idx=$((i + 1))
             echo -e "${MAGENTA}[${display_idx}/${total_clusters}]${NC} Launching: ${YELLOW}${cluster}${NC}"
-            execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}" &
+            execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}" "${timestamp}" &
             pids+=($!)
         done
 
@@ -252,6 +274,7 @@ run_sequential_with_list() {
     local cluster_list="$2"
     local timeout_sec="$3"
     local results_dir="$4"
+    local timestamp="$5"
 
     local results_file="${results_dir}/raw_results.txt"
     > "${results_file}"
@@ -266,7 +289,7 @@ run_sequential_with_list() {
         [[ -z "${cluster}" ]] && continue
         idx=$((idx + 1))
         echo -e "${MAGENTA}[${idx}/${total_clusters}]${NC} ${cluster}..."
-        execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}"
+        execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}" "${timestamp}"
     done <<< "${cluster_list}"
 }
 
@@ -280,6 +303,7 @@ run_parallel() {
     local timeout_sec="$3"
     local results_dir="$4"
     local batch_size="$5"
+    local timestamp="$6"
 
     local cluster_list=$(get_cluster_list "${config_file}")
     local cluster_count=$(count_clusters "${config_file}")
@@ -322,7 +346,7 @@ run_parallel() {
             local display_idx=$((i + 1))
             echo -e "${MAGENTA}[${display_idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
 
-            execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" &
+            execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" "${timestamp}" &
             pids["${cluster_name}"]=$!
         done
 
@@ -350,6 +374,7 @@ run_sequential() {
     local config_file="$2"
     local timeout_sec="$3"
     local results_dir="$4"
+    local timestamp="$5"
 
     local cluster_list=$(get_cluster_list "${config_file}")
     local cluster_count=$(count_clusters "${config_file}")
@@ -365,7 +390,7 @@ run_sequential() {
         idx=$((idx + 1))
         echo -e "${MAGENTA}[${idx}/${cluster_count}]${NC} ${cluster_name}..."
 
-        execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}"
+        execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" "${timestamp}"
     done < <(echo "${cluster_list}")
 }
 
@@ -602,16 +627,16 @@ run_ops_command() {
     if [[ -n "${mgmt_env}" ]]; then
         # Use list-based execution for management discovery mode
         if [[ "${parallel}" == "true" ]]; then
-            run_parallel_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}" "${batch_size}"
+            run_parallel_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}" "${batch_size}" "${timestamp}"
         else
-            run_sequential_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}"
+            run_sequential_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}" "${timestamp}"
         fi
     else
         # Use file-based execution for config file mode
         if [[ "${parallel}" == "true" ]]; then
-            run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}"
+            run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}" "${timestamp}"
         else
-            run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}"
+            run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${timestamp}"
         fi
     fi
 
@@ -620,6 +645,13 @@ run_ops_command() {
 
     # Cleanup temp results file
     rm -f "${results_file}"
+
+    # Run cleanup for each cluster
+    local output_base_dir="${HOME}/k8s-health-check/output"
+    while IFS= read -r cluster_name; do
+        [[ -z "${cluster_name}" ]] && continue
+        cleanup_old_files "${output_base_dir}/${cluster_name}" "ops"
+    done <<< "${cluster_list}"
 
     echo ""
     display_banner "Ops Command Complete!"

@@ -13,6 +13,10 @@ export CYAN='\033[0;36m'
 export MAGENTA='\033[0;35m'
 export NC='\033[0m' # No Color
 
+# Text formatting
+export BOLD='\033[1m'
+export RESET='\033[0m'
+
 # Image exclusion pattern (customize as needed)
 export IMAGE_EXCLUSION_PATTERN='harbor|localhost:5000|image: sha256|vmware|broadcom|dynatrace|ghcr.io/northerntrust-internal'
 
@@ -279,6 +283,50 @@ get_formatted_timestamp() {
 }
 
 #===============================================================================
+# File Cleanup Functions
+#===============================================================================
+
+# Cleanup old files, keeping only N most recent
+# Usage: cleanup_old_files "/base/path/cluster-name" "h-c-r"
+#        cleanup_old_files "/base/path/cluster-name" "ops"
+#        cleanup_old_files "/base/path/cluster-name" "upgrade"
+cleanup_old_files() {
+    local base_path="$1"
+    local subdir="$2"
+    local keep_count=5
+
+    local target_dir="${base_path}/${subdir}"
+    [[ ! -d "${target_dir}" ]] && return 0
+
+    # Get all timestamped files (exclude latest/ directory)
+    local file_patterns=(
+        "pre-hcr-*.txt"
+        "post-hcr-*.txt"
+        "comparison-hcr-*.txt"
+        "ops-output-*.txt"
+        "ops-raw-*.txt"
+        "upgrade-log-*.txt"
+    )
+
+    for pattern in "${file_patterns[@]}"; do
+        local files=($(ls -t "${target_dir}/${pattern}" 2>/dev/null))
+        local file_count=${#files[@]}
+
+        if [[ ${file_count} -gt ${keep_count} ]]; then
+            local files_to_delete=("${files[@]:${keep_count}}")
+            for file in "${files_to_delete[@]}"; do
+                debug "Removing old file: $(basename "${file}")"
+                rm -f "${file}"
+            done
+        fi
+    done
+
+    if [[ ${file_count} -gt ${keep_count} ]]; then
+        debug "Cleanup completed for ${subdir}/ (kept ${keep_count} latest files)"
+    fi
+}
+
+#===============================================================================
 # Initialization
 #===============================================================================
 
@@ -307,6 +355,7 @@ export -f display_info
 export -f get_environment_info
 export -f get_timestamp
 export -f get_formatted_timestamp
+export -f cleanup_old_files
 
 # Mark library as loaded to prevent duplicate sourcing
 export COMMON_LIB_LOADED=1
