@@ -66,7 +66,7 @@ warning() {
 
 # Display debug message (only when DEBUG is enabled)
 debug() {
-    if [[ "${DEBUG}" == "on" ]] || [[ "${DEBUG}" == "true" ]]; then
+    if [[ "${DEBUG:-}" == "on" ]] || [[ "${DEBUG:-}" == "true" ]]; then
         echo -e "${MAGENTA}[DEBUG]${NC} $1"
     fi
 }
