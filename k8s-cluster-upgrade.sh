@@ -279,7 +279,7 @@ get_node_count() {
 
     # Fetch kubeconfig for this specific cluster
     local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" >/dev/null 2>&1; then
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" </dev/null >/dev/null 2>&1; then
         warning "Could not fetch kubeconfig for ${cluster_name}, using default node count"
         echo "5"
         return 0
@@ -321,7 +321,7 @@ monitor_upgrade_progress() {
     local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
     local use_kubectl_monitoring=false
 
-    if fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" >/dev/null 2>&1; then
+    if fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" </dev/null >/dev/null 2>&1; then
         debug "Kubeconfig available - will use kubectl for monitoring"
         use_kubectl_monitoring=true
     else
@@ -557,7 +557,7 @@ upgrade_single_cluster() {
     local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
     local pre_version="unknown"
 
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" >/dev/null 2>&1; then
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${cluster_kubeconfig}" </dev/null >/dev/null 2>&1; then
         warning "Could not fetch kubeconfig, version detection will be skipped"
         pre_version="unknown"
     else
