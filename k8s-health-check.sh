@@ -314,7 +314,8 @@ process_cluster_parallel() {
 
     # Fetch kubeconfig (consolidated storage - TMC context already prepared)
     local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
+    # Suppress stdout only, keep stderr visible for errors
+    if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null; then
         {
             echo "===CLUSTER_START==="
             echo "CLUSTER_NAME:${cluster_name}"
@@ -440,7 +441,8 @@ prepare_tmc_contexts() {
         current=$((current + 1))
         debug "[${current}/${cluster_count}] Preparing TMC context for ${cluster_name}..."
 
-        if ! ensure_tmc_context "${cluster_name}" >/dev/null 2>&1; then
+        # Note: Don't suppress stderr - it contains password prompts and important errors
+        if ! ensure_tmc_context "${cluster_name}"; then
             warning "Failed to prepare TMC context for ${cluster_name}"
             failed_clusters+=("${cluster_name}")
         fi

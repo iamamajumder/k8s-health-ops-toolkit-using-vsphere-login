@@ -145,12 +145,13 @@ execute_on_cluster() {
     local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
 
     # Setup TMC context and fetch kubeconfig
-    if ! ensure_tmc_context "${cluster_name}" >/dev/null 2>&1; then
+    # Note: Keep stderr visible for prompts and errors
+    if ! ensure_tmc_context "${cluster_name}" >/dev/null; then
         status="FAILED"
         output="Failed to create/verify TMC context"
         exit_code=1
     else
-        if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null 2>&1; then
+        if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null; then
             status="FAILED"
             output="Failed to fetch kubeconfig"
             exit_code=1

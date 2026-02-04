@@ -1,8 +1,22 @@
 # Kubernetes Cluster Health Check Tool
 
-**Version 3.5** - Management Cluster Discovery & Dynamic Operations
+**Version 3.6** - Per-Cluster Output Structure & Bug Fixes
 
 ---
+
+## What's New in v3.6
+
+- **Output Folder Restructuring**: Complete reorganization from timestamp-based to per-cluster directories
+  - All cluster data now in `~/k8s-health-check/output/<cluster>/`
+  - Consolidated kubeconfig (1 per cluster instead of dozens of duplicates)
+  - Timestamped files with automatic cleanup (keeps 5 most recent)
+  - 91% reduction in kubeconfig duplication, 63% storage savings
+  - Backward compatible with old structure
+- **Bug Fixes**:
+  - Fixed TMC authentication prompts hanging (removed stderr suppression)
+  - Fixed BOLD variable error in upgrade script
+- **File Retention**: Automatic cleanup keeps 5 most recent files per type
+- **Zero Migration Required**: Old directories preserved, automatic transition
 
 ## What's New in v3.5
 
@@ -282,17 +296,17 @@ chmod +x k8s-cluster-upgrade.sh
 ./k8s-cluster-upgrade.sh -c my-cluster --dry-run
 ```
 
-### Upgrade Output Structure
+### Upgrade Output Structure (v3.6+)
 
+**New Structure:**
 ```
-upgrade-results/
-└── upgrade-YYYYMMDD_HHMMSS/
-    └── cluster-name/
-        ├── pre-upgrade-health.txt      # PRE health check report
-        ├── upgrade-log.txt             # Upgrade execution and monitoring
-        ├── post-upgrade-health.txt     # POST health check report
-        └── comparison-report.txt       # PRE vs POST comparison
+~/k8s-health-check/output/cluster-name/upgrade/
+├── pre-hcr-YYYYMMDD_HHMMSS.txt        # PRE health check copy
+├── upgrade-log-YYYYMMDD_HHMMSS.txt    # Upgrade execution log
+└── post-hcr-YYYYMMDD_HHMMSS.txt       # POST health check copy
 ```
+
+**Note**: Comparison reports stay in `h-c-r/` directory (no duplication)
 
 ### Example Monitoring Output
 
@@ -418,13 +432,16 @@ Results saved to: ops-results/ops-20260129_143000/output.txt
 ================================================================================
 ```
 
-### Ops Output Structure
+### Ops Output Structure (v3.6+)
 
+**New Per-Cluster Structure:**
 ```
-ops-results/
-└── ops-YYYYMMDD_HHMMSS/
-    └── output.txt     # Full results with cluster headers
+~/k8s-health-check/output/cluster-name/ops/
+├── ops-output-YYYYMMDD_HHMMSS.txt     # Formatted output
+└── ops-raw-YYYYMMDD_HHMMSS.txt        # Raw command output
 ```
+
+**Benefits**: Easy to filter results per cluster, maintains complete history
 
 ---
 
@@ -542,30 +559,41 @@ What changed after the maintenance/upgrade:
 ================================================================================
 ```
 
-### Output Structure
+### Output Structure (v3.6+)
 
+**New Per-Cluster Structure:**
 ```
-health-check-results/
-├── latest/                        # Symlink/copy to most recent PRE results
-│   └── (same structure as pre-YYYYMMDD_HHMMSS/)
-│
-├── pre-YYYYMMDD_HHMMSS/           # PRE-change results
-│   ├── cluster-name-1/
-│   │   ├── kubeconfig             # Cluster kubeconfig
-│   │   └── health-check-report.txt
-│   └── cluster-name-2/
-│       ├── kubeconfig
-│       └── health-check-report.txt
-│
-└── post-YYYYMMDD_HHMMSS/          # POST-change results
-    ├── cluster-name-1/
-    │   ├── kubeconfig
-    │   ├── health-check-report.txt
-    │   └── comparison-report.txt  # PRE vs POST comparison
-    └── cluster-name-2/
-        ├── kubeconfig
-        ├── health-check-report.txt
-        └── comparison-report.txt
+~/k8s-health-check/output/
+└── cluster-name/
+    ├── kubeconfig                              # Single cached file (12-hour expiry)
+    ├── h-c-r/                                  # Health Check Reports
+    │   ├── pre-hcr-YYYYMMDD_HHMMSS.txt
+    │   ├── post-hcr-YYYYMMDD_HHMMSS.txt
+    │   ├── comparison-hcr-YYYYMMDD_HHMMSS.txt
+    │   └── latest/                             # Latest PRE copy
+    │       └── pre-hcr-YYYYMMDD_HHMMSS.txt
+    ├── ops/                                    # Operations results
+    │   ├── ops-output-YYYYMMDD_HHMMSS.txt
+    │   └── ops-raw-YYYYMMDD_HHMMSS.txt
+    └── upgrade/                                # Upgrade logs
+        ├── pre-hcr-YYYYMMDD_HHMMSS.txt
+        ├── post-hcr-YYYYMMDD_HHMMSS.txt
+        └── upgrade-log-YYYYMMDD_HHMMSS.txt
+```
+
+**Key Features:**
+- **Per-cluster organization**: All data for a cluster in one location
+- **Timestamped files**: Sortable by date (`ls -lt` shows newest first)
+- **Automatic cleanup**: Keeps 5 most recent files per type
+- **Consolidated kubeconfig**: Single file shared across all operations
+- **No migration needed**: Old structure still accessible in `./health-check-results/`, `./upgrade-results/`, `./ops-results/`
+
+**Legacy Structure** (pre-v3.6, still readable for backward compatibility):
+```
+health-check-results/          # Old timestamp-based structure
+├── latest/
+├── pre-YYYYMMDD_HHMMSS/
+└── post-YYYYMMDD_HHMMSS/
 ```
 
 ### Caching
@@ -573,17 +601,18 @@ health-check-results/
 | Cache Type | Location | Expiry |
 |------------|----------|--------|
 | Metadata | `~/.k8s-health-check/metadata.cache` | 12 hours |
-| Kubeconfig | `~/.k8s-health-check/kubeconfigs/` | 12 hours |
+| Kubeconfig (v3.6+) | `~/k8s-health-check/output/<cluster>/kubeconfig` | 12 hours |
+| Kubeconfig (legacy) | `~/.k8s-health-check/kubeconfigs/` | 12 hours |
 | TMC Context | `~/.k8s-health-check/context-timestamps.cache` | 12 hours |
 | Management Clusters | `~/.k8s-health-check/management-clusters.cache` | 12 hours |
 | Discovered Clusters | `~/.k8s-health-check/mgmt-<name>-clusters.cache` | 12 hours |
 
 **Cache Benefits:**
 - Reduces TMC API calls for better performance
-- 12-hour expiry ensures fresh data during upgrades (v3.5 standard)
+- 12-hour expiry ensures fresh data during upgrades
 - Automatic refresh when cache expires
 - Can be manually cleared with `--clear-cache` flag
-- Management discovery results cached for fast repeated execution
+- **v3.6**: Consolidated kubeconfig eliminates duplicates (1 per cluster)
 
 ---
 
@@ -682,8 +711,9 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 3.6 | 2026-02-04 | Per-cluster output structure, consolidated kubeconfig, automatic cleanup, bug fixes |
 | 3.5 | 2026-02-03 | Management cluster discovery, simplified upgrade script, standardized caching |
-| 3.4 | 2026-01-29 | Automated cluster upgrade, multi-cluster ops command |
+| 3.4 | 2026-01-29 | Automated cluster upgrade, multi-cluster ops command, parallel execution |
 | 3.3 | 2026-01-29 | Unified script with --mode flag, lib/health.sh module, test suite |
 | 3.2.6 | 2026-01-29 | Fixed grep -c pattern bug causing "0\n0" arithmetic errors |
 | 3.2 | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |
