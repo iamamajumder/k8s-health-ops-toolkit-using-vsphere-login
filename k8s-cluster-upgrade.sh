@@ -299,43 +299,84 @@ monitor_upgrade_progress() {
     local provisioner="$3"
     local timeout_minutes="$4"
     local output_dir="$5"
+    local pre_version="$6"  # PRE-upgrade version for verification
 
-    local upgrade_log="${output_dir}/upgrade-log.txt"
+    # Find the upgrade log file (uses timestamp from execute_upgrade)
+    local upgrade_log=$(ls -t "${output_dir}"/upgrade-log-*.txt 2>/dev/null | head -1)
+    if [[ -z "${upgrade_log}" ]]; then
+        error "Could not find upgrade log file in ${output_dir}"
+        return 1
+    fi
+
     local start_time=$(date +%s)
     local check_interval=120  # 2 minutes
 
     echo "" | tee -a "${upgrade_log}"
-    progress "Monitoring upgrade progress (updates every 2 minutes)..."
+    progress "Monitoring upgrade progress (updates every 2 minutes)..." | tee -a "${upgrade_log}"
     echo "Timeout: ${timeout_minutes} minutes" | tee -a "${upgrade_log}"
+    echo "Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
     echo "" | tee -a "${upgrade_log}"
 
+    debug "Starting upgrade monitoring for ${cluster_name}"
+    debug "Pre-upgrade version: ${pre_version}"
+
+    local iteration=0
     while true; do
+        iteration=$((iteration + 1))
         local current_time=$(date +%s)
         local elapsed=$(( (current_time - start_time) / 60 ))
 
+        debug "Monitor iteration ${iteration}, elapsed: ${elapsed} minutes"
+
         # Query cluster status
-        local status_json=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null || echo "{}")
+        local status_json=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null)
+        local get_exit_code=$?
+
+        if [[ ${get_exit_code} -ne 0 ]]; then
+            warning "Failed to query cluster status (attempt ${iteration}), will retry..." | tee -a "${upgrade_log}"
+            sleep ${check_interval}
+            continue
+        fi
 
         local phase=$(echo "${status_json}" | jq -r '.status.phase // "UNKNOWN"')
         local version=$(echo "${status_json}" | jq -r '.status.kubeVersion // "unknown"')
         local health=$(echo "${status_json}" | jq -r '.status.health // "UNKNOWN"')
 
-        # Check for completion
+        debug "Current state - Phase: ${phase}, Version: ${version}, Health: ${health}"
+
+        # Display progress
+        printf "[%3d min] Phase: %-12s | Version: %-10s | Health: %s\n" \
+            "${elapsed}" "${phase}" "${version}" "${health}" | tee -a "${upgrade_log}"
+
+        # Check for completion (READY phase AND version changed)
         if [[ "${phase}" == "READY" ]]; then
             echo "" | tee -a "${upgrade_log}"
-            success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
-            echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
-            echo "  Version: ${version}" | tee -a "${upgrade_log}"
-            echo "  Health: ${health}" | tee -a "${upgrade_log}"
-            echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
-            echo "" | tee -a "${upgrade_log}"
-            return 0
+
+            # Verify version changed
+            if [[ "${version}" != "${pre_version}" && "${version}" != "unknown" ]]; then
+                success "Upgrade completed successfully!" | tee -a "${upgrade_log}"
+                echo "  Cluster: ${cluster_name}" | tee -a "${upgrade_log}"
+                echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
+                echo "  Post-upgrade version: ${version}" | tee -a "${upgrade_log}"
+                echo "  Health: ${health}" | tee -a "${upgrade_log}"
+                echo "  Duration: ${elapsed} minutes" | tee -a "${upgrade_log}"
+                echo "" | tee -a "${upgrade_log}"
+
+                # Save versions for comparison
+                echo "${pre_version}" > "${output_dir}/.pre-version"
+                echo "${version}" > "${output_dir}/.post-version"
+
+                return 0
+            else
+                warning "Cluster is READY but version unchanged (${pre_version} -> ${version})" | tee -a "${upgrade_log}"
+                warning "Continuing to monitor..." | tee -a "${upgrade_log}"
+            fi
         fi
 
         # Check for error states
-        if [[ "${phase}" == "ERROR" || "${health}" == "UNHEALTHY" ]]; then
+        if [[ "${phase}" == "ERROR" ]]; then
             echo "" | tee -a "${upgrade_log}"
-            error "Upgrade failed or cluster unhealthy!" | tee -a "${upgrade_log}"
+            error "Upgrade failed - cluster in ERROR phase!" | tee -a "${upgrade_log}"
             echo "  Phase: ${phase}" | tee -a "${upgrade_log}"
             echo "  Health: ${health}" | tee -a "${upgrade_log}"
             echo "  Version: ${version}" | tee -a "${upgrade_log}"
@@ -343,21 +384,19 @@ monitor_upgrade_progress() {
             return 1
         fi
 
-        # Display progress
-        printf "[%3d min] Phase: %-12s | Version: %-10s | Health: %s\n" \
-            "${elapsed}" "${phase}" "${version}" "${health}" | tee -a "${upgrade_log}"
-
         # Check timeout
         if [[ ${elapsed} -ge ${timeout_minutes} ]]; then
             echo "" | tee -a "${upgrade_log}"
             error "Upgrade timeout after ${timeout_minutes} minutes" | tee -a "${upgrade_log}"
             echo "  Last known phase: ${phase}" | tee -a "${upgrade_log}"
             echo "  Last known version: ${version}" | tee -a "${upgrade_log}"
+            echo "  Pre-upgrade version: ${pre_version}" | tee -a "${upgrade_log}"
             echo "" | tee -a "${upgrade_log}"
             return 2
         fi
 
         # Wait before next check
+        debug "Sleeping ${check_interval} seconds before next check..."
         sleep ${check_interval}
     done
 }
@@ -463,14 +502,25 @@ upgrade_single_cluster() {
     echo "  Provisioner: ${provisioner}"
     echo ""
 
-    # Step 4: Execute upgrade
+    # Step 4: Get PRE-upgrade version for verification
+    progress "Getting current cluster version..."
+    local pre_version=$(tanzu tmc cluster get "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" -o json 2>/dev/null | jq -r '.status.kubeVersion // "unknown"')
+    if [[ -z "${pre_version}" || "${pre_version}" == "unknown" ]]; then
+        warning "Could not determine pre-upgrade version, will skip version verification"
+        pre_version="unknown"
+    else
+        success "Pre-upgrade version: ${pre_version}"
+    fi
+    echo ""
+
+    # Step 5: Execute upgrade
     if ! execute_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${output_dir}"; then
         error "Failed to initiate upgrade for ${cluster_name}"
         echo "FAILED" > "${output_dir}/status.txt"
         return 1
     fi
 
-    # Step 5: Calculate timeout and get node count
+    # Step 6: Calculate timeout and get node count
     local node_count=$(get_node_count "${cluster_name}")
     local timeout_minutes=$((node_count * TIMEOUT_MULTIPLIER))
 
@@ -480,14 +530,29 @@ upgrade_single_cluster() {
     echo "  Timeout: ${timeout_minutes} minutes (${node_count} nodes × ${TIMEOUT_MULTIPLIER} min/node)"
     echo ""
 
-    # Step 6: Monitor upgrade progress
+    # Step 7: Monitor upgrade progress (with version verification)
     local monitor_result=0
-    monitor_upgrade_progress "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}"
+    monitor_upgrade_progress "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}"
     monitor_result=$?
 
     case ${monitor_result} in
         0)
             success "Upgrade monitoring completed successfully"
+
+            # Display version change summary
+            if [[ -f "${output_dir}/.pre-version" && -f "${output_dir}/.post-version" ]]; then
+                local verified_pre=$(cat "${output_dir}/.pre-version")
+                local verified_post=$(cat "${output_dir}/.post-version")
+                echo ""
+                echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
+                echo -e "${GREEN}║         KUBERNETES VERSION VERIFICATION                  ║${NC}"
+                echo -e "${GREEN}╠═══════════════════════════════════════════════════════════╣${NC}"
+                echo -e "${GREEN}║${NC} Pre-upgrade version:  ${YELLOW}${verified_pre}${NC}"
+                echo -e "${GREEN}║${NC} Post-upgrade version: ${YELLOW}${verified_post}${NC}"
+                echo -e "${GREEN}║${NC} Status:               ${GREEN}✓ VERSION UPGRADED${NC}"
+                echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
+                echo ""
+            fi
             ;;
         1)
             error "Upgrade failed during execution"
@@ -501,7 +566,7 @@ upgrade_single_cluster() {
             ;;
     esac
 
-    # Step 7: Run POST-upgrade health check
+    # Step 8: Run POST-upgrade health check
     if ! run_post_health_check "${cluster_name}" "${output_dir}"; then
         warning "POST-upgrade health check failed, but upgrade completed"
         echo "SUCCESS_WITH_HEALTH_CHECK_FAILED" > "${output_dir}/status.txt"
