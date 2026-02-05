@@ -1,5 +1,6 @@
 #!/bin/bash
 # Section 18: Cluster Summary with Health Indicators
+# Refactored to use centralized health.sh functions
 
 run_section_18_cluster_summary() {
     print_header "SECTION 18: CLUSTER SUMMARY"
@@ -7,192 +8,99 @@ run_section_18_cluster_summary() {
     echo "--- Resource Counts ---"
     echo ""
 
-    # Basic counts
-    local nodes_total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    nodes_total=${nodes_total:-0}
-    local nodes_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready' || true)
-    nodes_ready=$(echo "${nodes_ready}" | tr -d ' \n\r')
-    nodes_ready=${nodes_ready:-0}
-    local pods_total=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    pods_total=${pods_total:-0}
-    local pods_running=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running || true)
-    pods_running=$(echo "${pods_running}" | tr -d ' \n\r')
-    pods_running=${pods_running:-0}
-    local pods_notrunning=$(kubectl get pods -A --no-headers 2>/dev/null | grep -v Running | grep -v Completed | wc -l | tr -d ' ')
-    local deploys_total=$(kubectl get deploy -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local ds_total=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local sts_total=$(kubectl get sts -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local svc_total=$(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local pvc_total=$(kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local ns_total=$(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local helm_total=$(helm list -A --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
+    # Collect all health metrics using centralized module
+    collect_health_metrics
+    calculate_health_status
 
-    echo "Nodes Total: ${nodes_total}"
-    echo "Nodes Ready: ${nodes_ready}"
-    echo "Pods Total: ${pods_total}"
-    echo "Pods Running: ${pods_running}"
+    # Collect display-only metrics not in health.sh
+    local svc_total=$(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    local ns_total=$(kubectl get ns --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    local pods_notrunning=$((HEALTH_PODS_TOTAL - HEALTH_PODS_RUNNING - HEALTH_PODS_COMPLETED))
+    [ "${pods_notrunning}" -lt 0 ] && pods_notrunning=0
+
+    # Display resource counts (format must match parse_health_report() grep patterns)
+    echo "Nodes Total: ${HEALTH_NODES_TOTAL}"
+    echo "Nodes Ready: ${HEALTH_NODES_READY}"
+    echo "Pods Total: ${HEALTH_PODS_TOTAL}"
+    echo "Pods Running: ${HEALTH_PODS_RUNNING}"
     echo "Pods Not Running: ${pods_notrunning}"
-    echo "Deployments Total: ${deploys_total}"
-    echo "DaemonSets Total: ${ds_total}"
-    echo "StatefulSets Total: ${sts_total}"
+    echo "Deployments Total: ${HEALTH_DEPLOYS_TOTAL}"
+    echo "DaemonSets Total: ${HEALTH_DS_TOTAL}"
+    echo "StatefulSets Total: ${HEALTH_STS_TOTAL}"
     echo "Services Total: ${svc_total}"
-    echo "PVCs Total: ${pvc_total}"
+    echo "PVCs Total: ${HEALTH_PVC_TOTAL}"
     echo "Namespaces: ${ns_total}"
-    echo "Helm Releases: ${helm_total}"
+    echo "Helm Releases: ${HEALTH_HELM_TOTAL}"
     echo ""
 
     echo "--- Health Indicators ---"
     echo ""
 
-    # Health indicator calculations
-    local nodes_notready=$((nodes_total - nodes_ready))
-    local pods_crashloop=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic CrashLoopBackOff || true)
-    pods_crashloop=$(echo "${pods_crashloop}" | tr -d ' \n\r')
-    pods_crashloop=${pods_crashloop:-0}
-    local pods_pending=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Pending || true)
-    pods_pending=$(echo "${pods_pending}" | tr -d ' \n\r')
-    pods_pending=${pods_pending:-0}
-    local pods_completed=$(kubectl get pods -A --no-headers 2>/dev/null | grep -ic Completed || true)
-    pods_completed=$(echo "${pods_completed}" | tr -d ' \n\r')
-    pods_completed=${pods_completed:-0}
-
-    # Deployments not ready (READY column shows X/Y where X != Y)
-    local deploys_notready=$(kubectl get deploy -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
-
-    # DaemonSets not ready (DESIRED != READY)
-    local ds_notready=$(kubectl get ds -A --no-headers 2>/dev/null | awk '$4 != $6 {count++} END{print count+0}' | tr -d ' ')
-
-    # StatefulSets not ready (READY column shows X/Y where X != Y)
-    local sts_notready=$(kubectl get sts -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(a[1]!=a[2]) count++} END{print count+0}' | tr -d ' ')
-
-    # PVCs not bound
-    local pvc_notbound=$(kubectl get pvc -A --no-headers 2>/dev/null | grep -v Bound | wc -l | tr -d ' ')
-
-    # Helm releases failed
-    local helm_failed=$(helm list -A --failed --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo '0')
-
-    # Clean up values (ensure integers)
-    nodes_notready=${nodes_notready:-0}
-    pods_crashloop=${pods_crashloop:-0}
-    pods_pending=${pods_pending:-0}
-    pods_completed=${pods_completed:-0}
-    deploys_notready=${deploys_notready:-0}
-    ds_notready=${ds_notready:-0}
-    sts_notready=${sts_notready:-0}
-    pvc_notbound=${pvc_notbound:-0}
-    helm_failed=${helm_failed:-0}
-
-    # Calculate unaccounted pods (not Running, Completed, CrashLoop, or Pending)
-    local pods_unaccounted=$((pods_total - pods_running - pods_completed - pods_crashloop - pods_pending))
-    [ "${pods_unaccounted}" -lt 0 ] && pods_unaccounted=0
-
-    # Display health indicators with status
-    if [ "$nodes_notready" -gt 0 ]; then
-        echo "Nodes NotReady: ${nodes_notready}      [CRITICAL]"
+    # Display health indicators with status (format must match parse_health_report() grep patterns)
+    if [ "${HEALTH_NODES_NOTREADY}" -gt 0 ]; then
+        echo "Nodes NotReady: ${HEALTH_NODES_NOTREADY}      [CRITICAL]"
     else
-        echo "Nodes NotReady: ${nodes_notready}      [OK]"
+        echo "Nodes NotReady: ${HEALTH_NODES_NOTREADY}      [OK]"
     fi
 
-    if [ "$pods_crashloop" -gt 0 ]; then
-        echo "Pods CrashLoop: ${pods_crashloop}      [CRITICAL]"
+    if [ "${HEALTH_PODS_CRASHLOOP}" -gt 0 ]; then
+        echo "Pods CrashLoop: ${HEALTH_PODS_CRASHLOOP}      [CRITICAL]"
     else
-        echo "Pods CrashLoop: ${pods_crashloop}      [OK]"
+        echo "Pods CrashLoop: ${HEALTH_PODS_CRASHLOOP}      [OK]"
     fi
 
-    if [ "$pods_pending" -gt 0 ]; then
-        echo "Pods Pending: ${pods_pending}      [WARNING]"
+    if [ "${HEALTH_PODS_PENDING}" -gt 0 ]; then
+        echo "Pods Pending: ${HEALTH_PODS_PENDING}      [WARNING]"
     else
-        echo "Pods Pending: ${pods_pending}      [OK]"
+        echo "Pods Pending: ${HEALTH_PODS_PENDING}      [OK]"
     fi
 
-    if [ "$deploys_notready" -gt 0 ]; then
-        echo "Deploys NotReady: ${deploys_notready}      [WARNING]"
+    if [ "${HEALTH_DEPLOYS_NOTREADY}" -gt 0 ]; then
+        echo "Deploys NotReady: ${HEALTH_DEPLOYS_NOTREADY}      [WARNING]"
     else
-        echo "Deploys NotReady: ${deploys_notready}      [OK]"
+        echo "Deploys NotReady: ${HEALTH_DEPLOYS_NOTREADY}      [OK]"
     fi
 
-    if [ "$ds_notready" -gt 0 ]; then
-        echo "DS NotReady: ${ds_notready}      [WARNING]"
+    if [ "${HEALTH_DS_NOTREADY}" -gt 0 ]; then
+        echo "DS NotReady: ${HEALTH_DS_NOTREADY}      [WARNING]"
     else
-        echo "DS NotReady: ${ds_notready}      [OK]"
+        echo "DS NotReady: ${HEALTH_DS_NOTREADY}      [OK]"
     fi
 
-    if [ "$sts_notready" -gt 0 ]; then
-        echo "STS NotReady: ${sts_notready}      [WARNING]"
+    if [ "${HEALTH_STS_NOTREADY}" -gt 0 ]; then
+        echo "STS NotReady: ${HEALTH_STS_NOTREADY}      [WARNING]"
     else
-        echo "STS NotReady: ${sts_notready}      [OK]"
+        echo "STS NotReady: ${HEALTH_STS_NOTREADY}      [OK]"
     fi
 
-    if [ "$pvc_notbound" -gt 0 ]; then
-        echo "PVCs NotBound: ${pvc_notbound}      [WARNING]"
+    if [ "${HEALTH_PVC_NOTBOUND}" -gt 0 ]; then
+        echo "PVCs NotBound: ${HEALTH_PVC_NOTBOUND}      [WARNING]"
     else
-        echo "PVCs NotBound: ${pvc_notbound}      [OK]"
+        echo "PVCs NotBound: ${HEALTH_PVC_NOTBOUND}      [OK]"
     fi
 
-    if [ "$helm_failed" -gt 0 ]; then
-        echo "Helm Failed: ${helm_failed}      [WARNING]"
+    if [ "${HEALTH_HELM_FAILED}" -gt 0 ]; then
+        echo "Helm Failed: ${HEALTH_HELM_FAILED}      [WARNING]"
     else
-        echo "Helm Failed: ${helm_failed}      [OK]"
+        echo "Helm Failed: ${HEALTH_HELM_FAILED}      [OK]"
     fi
 
-    echo "Pods Completed: ${pods_completed}      [INFO]"
+    echo "Pods Completed: ${HEALTH_PODS_COMPLETED}      [INFO]"
 
-    if [ "$pods_unaccounted" -gt 0 ]; then
-        echo "Pods Unaccounted: ${pods_unaccounted}      [WARNING]"
+    if [ "${HEALTH_PODS_UNACCOUNTED}" -gt 0 ]; then
+        echo "Pods Unaccounted: ${HEALTH_PODS_UNACCOUNTED}      [WARNING]"
     else
-        echo "Pods Unaccounted: ${pods_unaccounted}      [OK]"
+        echo "Pods Unaccounted: ${HEALTH_PODS_UNACCOUNTED}      [OK]"
     fi
 
     echo ""
 
-    # Determine overall health status
-    local health_status="HEALTHY"
-    local critical_count=0
-    local warning_count=0
-
-    # Critical conditions
-    if [ "$nodes_notready" -gt 0 ]; then
-        critical_count=$((critical_count + 1))
-    fi
-    if [ "$pods_crashloop" -gt 0 ]; then
-        critical_count=$((critical_count + 1))
-    fi
-
-    # Warning conditions
-    if [ "$pods_pending" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-    if [ "$deploys_notready" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-    if [ "$ds_notready" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-    if [ "$sts_notready" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-    if [ "$pvc_notbound" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-    if [ "$helm_failed" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-    if [ "$pods_unaccounted" -gt 0 ]; then
-        warning_count=$((warning_count + 1))
-    fi
-
-    # Set health status
-    if [ "$critical_count" -gt 0 ]; then
-        health_status="CRITICAL"
-    elif [ "$warning_count" -gt 0 ]; then
-        health_status="WARNINGS"
-    fi
-
+    # Display overall health status (already calculated by calculate_health_status)
     echo "=================================================================================="
-    echo "CLUSTER HEALTH: ${health_status}"
-    if [ "$critical_count" -gt 0 ] || [ "$warning_count" -gt 0 ]; then
-        echo "  Critical Issues: ${critical_count}"
-        echo "  Warnings: ${warning_count}"
+    echo "CLUSTER HEALTH: ${HEALTH_STATUS}"
+    if [ "${HEALTH_CRITICAL_COUNT}" -gt 0 ] || [ "${HEALTH_WARNING_COUNT}" -gt 0 ]; then
+        echo "  Critical Issues: ${HEALTH_CRITICAL_COUNT}"
+        echo "  Warnings: ${HEALTH_WARNING_COUNT}"
     fi
     echo "=================================================================================="
     echo ""

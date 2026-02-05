@@ -1,6 +1,6 @@
 # Kubernetes Cluster Health Check & Management Tool
 
-**Version 3.7** | VMware Cloud Foundation 5.2.1 (VKS 3.3.3, VKR 1.28.x/1.29.x)
+**Version 3.8** | VMware Cloud Foundation 5.2.1 (VKS 3.3.3, VKR 1.28.x/1.29.x)
 
 A suite of three scripts for automated Kubernetes cluster health validation, upgrades, and multi-cluster operations through Tanzu Mission Control (TMC) integration.
 
@@ -453,12 +453,12 @@ Automatic cleanup keeps 5 most recent files per type per directory. The `latest/
 
 | Module | Purpose | Key Functions |
 |--------|---------|---------------|
-| `common.sh` | Shared utilities | `error()`, `success()`, `warning()`, `progress()`, `cleanup_old_files()` |
+| `common.sh` | Shared utilities | `error()`, `success()`, `warning()`, `progress()`, `cleanup_old_files()`, `safe_compare()`, `DEFAULT_BATCH_SIZE` |
 | `config.sh` | Configuration | `get_cluster_list()`, `count_clusters()`, `load_configuration()` |
-| `tmc-context.sh` | TMC contexts | `ensure_tmc_context()`, `determine_environment()` |
-| `tmc.sh` | TMC integration | `discover_cluster_metadata()`, `fetch_kubeconfig_auto()` |
+| `tmc-context.sh` | TMC contexts | `ensure_tmc_context()`, `ensure_tmc_context_for_environment()`, `_setup_tmc_context()` |
+| `tmc.sh` | TMC integration | `discover_cluster_metadata()`, `fetch_kubeconfig_auto()`, `prepare_tmc_contexts()` |
 | `health.sh` | Health metrics | `collect_health_metrics()`, `calculate_health_status()`, `generate_health_summary()` |
-| `comparison.sh` | PRE/POST | `generate_comparison_report()`, `parse_health_report()` |
+| `comparison.sh` | PRE/POST | `generate_comparison_report()`, `parse_health_report()`, `generate_metrics_comparison()` |
 
 ## Health Check Sections (`lib/sections/`)
 
@@ -517,6 +517,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 3.8 | 2026-02-05 | Codebase refactoring (~455 lines removed), shared `prepare_tmc_contexts()`, data-driven comparison, consolidated TMC context setup |
 | 3.7 | 2026-02-05 | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes, documentation overhaul |
 | 3.6 | 2026-02-04 | Per-cluster output structure, consolidated kubeconfig, automatic cleanup |
 | 3.5 | 2026-02-03 | Management cluster discovery, simplified upgrade script, standardized caching |

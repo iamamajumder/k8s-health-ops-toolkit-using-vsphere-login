@@ -4,6 +4,9 @@
 # Shared utilities for Kubernetes health check scripts
 #===============================================================================
 
+# Default configuration constants
+export DEFAULT_BATCH_SIZE=6  # Default batch size for parallel execution
+
 # Colors for output
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
@@ -200,47 +203,21 @@ clean_integer() {
 # Safe Integer Comparison Functions
 #===============================================================================
 
-# Safe integer comparison - greater than
-safe_gt() {
-    local val1="$1"
-    local val2="$2"
+# Generic safe integer comparison
+# Usage: safe_compare val1 operator val2
+# Operators: -gt, -lt, -eq, -ne, -ge, -le
+safe_compare() {
+    local val1=$(clean_integer "$1")
+    local operator="$2"
+    local val2=$(clean_integer "$3")
 
-    val1=$(clean_integer "${val1}")
-    val2=$(clean_integer "${val2}")
-
-    if [ -n "${val1}" ] && [ -n "${val2}" ] && [ "${val1}" -gt "${val2}" ] 2>/dev/null; then
-        return 0
-    fi
-    return 1
+    [ -n "${val1}" ] && [ -n "${val2}" ] && [ "${val1}" "${operator}" "${val2}" ] 2>/dev/null
 }
 
-# Safe integer comparison - equal
-safe_eq() {
-    local val1="$1"
-    local val2="$2"
-
-    val1=$(clean_integer "${val1}")
-    val2=$(clean_integer "${val2}")
-
-    if [ "${val1}" -eq "${val2}" ] 2>/dev/null; then
-        return 0
-    fi
-    return 1
-}
-
-# Safe integer comparison - not equal
-safe_ne() {
-    local val1="$1"
-    local val2="$2"
-
-    val1=$(clean_integer "${val1}")
-    val2=$(clean_integer "${val2}")
-
-    if [ "${val1}" -ne "${val2}" ] 2>/dev/null; then
-        return 0
-    fi
-    return 1
-}
+# Convenience wrappers for common comparisons
+safe_gt() { safe_compare "$1" -gt "$2"; }
+safe_eq() { safe_compare "$1" -eq "$2"; }
+safe_ne() { safe_compare "$1" -ne "$2"; }
 
 #===============================================================================
 # Display Functions
@@ -263,14 +240,8 @@ display_info() {
 }
 
 #===============================================================================
-# Environment Information
+# Timestamp Functions
 #===============================================================================
-
-# Get environment details (disabled - environment may change)
-get_environment_info() {
-    # Intentionally empty - environment details removed for flexibility
-    :
-}
 
 # Get current timestamp
 get_timestamp() {
@@ -368,12 +339,12 @@ export -f create_symlink
 export -f extract_section
 export -f filter_relevant_events
 export -f clean_integer
+export -f safe_compare
 export -f safe_gt
 export -f safe_eq
 export -f safe_ne
 export -f display_banner
 export -f display_info
-export -f get_environment_info
 export -f get_timestamp
 export -f get_formatted_timestamp
 export -f cleanup_old_files

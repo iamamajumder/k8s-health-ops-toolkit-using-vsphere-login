@@ -484,9 +484,50 @@ discover_clusters_by_management() {
 }
 
 #===============================================================================
+# TMC Context Preparation (Shared by health-check and upgrade scripts)
+#===============================================================================
+
+# Prepare TMC contexts for all clusters (Sequential - to avoid race conditions)
+# Usage: prepare_tmc_contexts "clusters.conf"
+prepare_tmc_contexts() {
+    local config_file="$1"
+
+    # Note: Credentials will be prompted inside ensure_tmc_context() only if
+    # a new context needs to be created (existing valid contexts are reused)
+
+    progress "Preparing TMC contexts for all clusters..."
+
+    local cluster_list=$(get_cluster_list "${config_file}")
+    local cluster_count=$(count_clusters "${config_file}")
+    local current=0
+    local failed_clusters=()
+
+    while IFS= read -r cluster_name; do
+        current=$((current + 1))
+        debug "[${current}/${cluster_count}] Preparing TMC context for ${cluster_name}..."
+
+        # Note: Don't suppress stderr - it contains password prompts and important errors
+        if ! ensure_tmc_context "${cluster_name}"; then
+            warning "Failed to prepare TMC context for ${cluster_name}"
+            failed_clusters+=("${cluster_name}")
+        fi
+    done < <(echo "${cluster_list}")
+
+    if [ ${#failed_clusters[@]} -gt 0 ]; then
+        warning "TMC context preparation failed for ${#failed_clusters[@]} cluster(s)"
+        for fc in "${failed_clusters[@]}"; do
+            debug "  - ${fc}"
+        done
+    fi
+
+    success "TMC contexts prepared"
+}
+
+#===============================================================================
 # Export Functions
 #===============================================================================
 
+export -f prepare_tmc_contexts
 export -f discover_cluster_metadata
 export -f fetch_kubeconfig_auto
 export -f fetch_kubeconfig

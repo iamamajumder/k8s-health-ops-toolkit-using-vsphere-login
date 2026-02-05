@@ -149,6 +149,27 @@ determine_environment() {
     fi
 }
 
+# Determine environment type from environment flag
+determine_environment_from_flag() {
+    local env_flag="$1"
+
+    # Extract environment type (prefix before first hyphen)
+    local env_type
+    env_type=$(echo "${env_flag}" | cut -d'-' -f1)
+
+    case "${env_type}" in
+        prod)
+            echo "prod"
+            ;;
+        uat|system|dev)
+            echo "nonprod"
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
+
 # Get TMC context name for environment
 get_tmc_context_name() {
     local environment="$1"
@@ -198,39 +219,24 @@ ensure_tanzu() {
     return 0
 }
 
-# Create TMC context if it doesn't exist
-ensure_tmc_context() {
-    local cluster_name="$1"
+#===============================================================================
+# Core TMC Context Setup (shared logic)
+#===============================================================================
 
-    # Ensure tanzu CLI is available
-    if ! ensure_tanzu; then
-        return 1
-    fi
+# Internal function: Setup TMC context for a given environment
+# Usage: _setup_tmc_context "prod|nonprod"
+_setup_tmc_context() {
+    local environment="$1"
 
-    # Determine environment from cluster name
-    local environment
-    environment=$(determine_environment "${cluster_name}")
-
-    if [[ "${environment}" == "unknown" ]]; then
-        error "Cannot determine environment for cluster ${cluster_name}"
-        error "Expected naming pattern: *-prod-[1-4], *-uat-[1-4], or *-system-[1-4]"
-        return 1
-    fi
-
-    local context_name
-    context_name=$(get_tmc_context_name "${environment}")
-
-    local endpoint
-    endpoint=$(get_tmc_endpoint "${environment}")
+    local context_name=$(get_tmc_context_name "${environment}")
+    local endpoint=$(get_tmc_endpoint "${environment}")
 
     # Check if we've already setup this context in this script run
     if [[ "${environment}" == "prod" ]] && [[ -n "${PROD_CONTEXT_READY}" ]]; then
-        # Already setup, just switch to it silently
         tanzu context use "${context_name}" >/dev/null 2>&1
         return 0
     fi
     if [[ "${environment}" == "nonprod" ]] && [[ -n "${NONPROD_CONTEXT_READY}" ]]; then
-        # Already setup, just switch to it silently
         tanzu context use "${context_name}" >/dev/null 2>&1
         return 0
     fi
@@ -238,10 +244,9 @@ ensure_tmc_context() {
     # Check if context exists and is still valid (less than 12 hours old)
     if tanzu context list 2>/dev/null | grep -q "${context_name}"; then
         if is_context_valid "${context_name}"; then
-            # Context exists and is valid, just switch to it (skip auth check)
+            # Context exists and is valid, just switch to it
             if tanzu context use "${context_name}" >/dev/null 2>&1; then
                 success "Reusing existing TMC context '${context_name}'"
-                # Mark as ready for subsequent calls in this run
                 if [[ "${environment}" == "prod" ]]; then
                     PROD_CONTEXT_READY="true"
                 else
@@ -275,9 +280,7 @@ ensure_tmc_context() {
            -i pinniped \
            --basic-auth >/dev/null 2>&1; then
         success "TMC context '${context_name}' created successfully"
-        # Save timestamp for 12-hour validity check
         save_context_timestamp "${context_name}"
-        # Mark as ready for subsequent calls in this run
         if [[ "${environment}" == "prod" ]]; then
             PROD_CONTEXT_READY="true"
         else
@@ -291,20 +294,56 @@ ensure_tmc_context() {
     fi
 }
 
+#===============================================================================
+# Public TMC Context Functions
+#===============================================================================
+
+# Create TMC context based on cluster name
+ensure_tmc_context() {
+    local cluster_name="$1"
+
+    if ! ensure_tanzu; then
+        return 1
+    fi
+
+    local environment=$(determine_environment "${cluster_name}")
+
+    if [[ "${environment}" == "unknown" ]]; then
+        error "Cannot determine environment for cluster ${cluster_name}"
+        error "Expected naming pattern: *-prod-[1-4], *-uat-[1-4], or *-system-[1-4]"
+        return 1
+    fi
+
+    _setup_tmc_context "${environment}"
+}
+
+# Create TMC context based on environment flag (e.g., prod-1, uat-2)
+ensure_tmc_context_for_environment() {
+    local env_flag="$1"
+
+    local environment=$(determine_environment_from_flag "${env_flag}")
+
+    if [[ "${environment}" == "unknown" ]]; then
+        error "Cannot determine environment for: ${env_flag}"
+        error "Expected format: prod-N, uat-N, or system-N"
+        return 1
+    fi
+
+    _setup_tmc_context "${environment}"
+}
+
 # Delete existing context and recreate (for troubleshooting)
 recreate_tmc_context() {
     local cluster_name="$1"
 
-    local environment
-    environment=$(determine_environment "${cluster_name}")
+    local environment=$(determine_environment "${cluster_name}")
 
     if [[ "${environment}" == "unknown" ]]; then
         error "Cannot determine environment for cluster ${cluster_name}"
         return 1
     fi
 
-    local context_name
-    context_name=$(get_tmc_context_name "${environment}")
+    local context_name=$(get_tmc_context_name "${environment}")
 
     if context_exists "${context_name}"; then
         progress "Deleting existing context '${context_name}'"
@@ -336,126 +375,22 @@ verify_tmc_context() {
 }
 
 #===============================================================================
-# Environment Flag Functions (v3.5)
+# Export Functions
 #===============================================================================
-
-# Determine environment type from environment flag
-determine_environment_from_flag() {
-    local env_flag="$1"
-
-    # Extract environment type (prefix before first hyphen)
-    local env_type
-    env_type=$(echo "${env_flag}" | cut -d'-' -f1)
-
-    case "${env_type}" in
-        prod)
-            echo "prod"
-            ;;
-        uat|system|dev)
-            echo "nonprod"
-            ;;
-        *)
-            echo "unknown"
-            ;;
-    esac
-}
-
-# Create or reuse TMC context for environment
-ensure_tmc_context_for_environment() {
-    local env_flag="$1"
-
-    # Determine environment type
-    local environment
-    environment=$(determine_environment_from_flag "${env_flag}")
-
-    if [[ "${environment}" == "unknown" ]]; then
-        error "Cannot determine environment for: ${env_flag}"
-        error "Expected format: prod-N, uat-N, or system-N"
-        return 1
-    fi
-
-    # Get context name and endpoint
-    local context_name
-    if [[ "${environment}" == "prod" ]]; then
-        context_name="${TMC_SM_CONTEXT_PROD}"
-    else
-        context_name="${TMC_SM_CONTEXT_NONPROD}"
-    fi
-
-    local endpoint
-    if [[ "${environment}" == "prod" ]]; then
-        endpoint="${PROD_DNS}"
-    else
-        endpoint="${NON_PROD_DNS}"
-    fi
-
-    # Check if context already setup in this run
-    if [[ "${environment}" == "prod" ]] && [[ -n "${PROD_CONTEXT_READY}" ]]; then
-        tanzu context use "${context_name}" >/dev/null 2>&1
-        return 0
-    fi
-    if [[ "${environment}" == "nonprod" ]] && [[ -n "${NONPROD_CONTEXT_READY}" ]]; then
-        tanzu context use "${context_name}" >/dev/null 2>&1
-        return 0
-    fi
-
-    # Check if context exists and is valid
-    if tanzu context list 2>/dev/null | grep -q "${context_name}"; then
-        if is_context_valid "${context_name}"; then
-            if tanzu context use "${context_name}" >/dev/null 2>&1; then
-                success "Reusing existing TMC context '${context_name}'"
-                if [[ "${environment}" == "prod" ]]; then
-                    PROD_CONTEXT_READY="true"
-                else
-                    NONPROD_CONTEXT_READY="true"
-                fi
-                return 0
-            fi
-        else
-            progress "Context '${context_name}' expired, recreating..."
-            tanzu context delete "${context_name}" -y >/dev/null 2>&1 || true
-        fi
-    fi
-
-    # Create context
-    progress "Creating TMC context '${context_name}' for ${environment}"
-
-    if ! prompt_tmc_credentials; then
-        return 1
-    fi
-
-    if TMC_SELF_MANAGED_USERNAME="${TMC_SELF_MANAGED_USERNAME}" \
-       TMC_SELF_MANAGED_PASSWORD="${TMC_SELF_MANAGED_PASSWORD}" \
-       tanzu tmc context create "${context_name}" \
-           --endpoint "${endpoint}" \
-           -i pinniped \
-           --basic-auth >/dev/null 2>&1; then
-        success "TMC context '${context_name}' created successfully"
-        save_context_timestamp "${context_name}"
-        if [[ "${environment}" == "prod" ]]; then
-            PROD_CONTEXT_READY="true"
-        else
-            NONPROD_CONTEXT_READY="true"
-        fi
-        return 0
-    else
-        error "Failed to create TMC context '${context_name}'"
-        return 1
-    fi
-}
 
 export -f init_context_cache
 export -f get_context_timestamp
 export -f save_context_timestamp
 export -f is_context_valid
 export -f determine_environment
+export -f determine_environment_from_flag
 export -f get_tmc_context_name
 export -f get_tmc_endpoint
 export -f context_exists
 export -f ensure_tanzu
 export -f prompt_tmc_credentials
+export -f _setup_tmc_context
 export -f ensure_tmc_context
+export -f ensure_tmc_context_for_environment
 export -f recreate_tmc_context
 export -f verify_tmc_context
-export -f determine_environment_from_flag
-export -f ensure_tmc_context_for_environment

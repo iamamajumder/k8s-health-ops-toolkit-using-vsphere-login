@@ -189,7 +189,11 @@ generate_comparison_report() {
     } > "${diff_file}" 2>&1
 }
 
-# Generate metrics comparison table
+#===============================================================================
+# Metrics Comparison Table (Data-Driven)
+#===============================================================================
+
+# Generate metrics comparison table using data-driven approach
 generate_metrics_comparison() {
     echo ""
     echo "############################################################################"
@@ -199,86 +203,61 @@ generate_metrics_comparison() {
     printf "%-25s %10s %10s %10s %10s\n" "Metric" "PRE" "POST" "DELTA" "STATUS"
     printf "%-25s %10s %10s %10s %10s\n" "-------------------------" "----------" "----------" "----------" "----------"
 
-    # Nodes
-    local delta=$(calculate_delta "${PRE_NODES_TOTAL}" "${POST_NODES_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "Nodes Total" "${PRE_NODES_TOTAL:-0}" "${POST_NODES_TOTAL:-0}" "$delta" "$(get_delta_status 'nodes_total' "$delta" 'neutral')"
+    # Metric definitions: "label|var_suffix|metric_type|group"
+    # Groups: nodes, pods, deploys, ds, sts, pvc, helm
+    local metrics=(
+        "Nodes Total|NODES_TOTAL|neutral|nodes"
+        "Nodes Ready|NODES_READY|lower_is_worse|nodes"
+        "Nodes NotReady|NODES_NOTREADY|higher_is_worse|nodes"
+        "Pods Total|PODS_TOTAL|neutral|pods"
+        "Pods Running|PODS_RUNNING|lower_is_worse|pods"
+        "Pods CrashLoopBackOff|PODS_CRASHLOOP|higher_is_worse|pods"
+        "Pods Pending|PODS_PENDING|higher_is_worse|pods"
+        "Pods Completed|PODS_COMPLETED|neutral|pods"
+        "Pods Unaccounted|PODS_UNACCOUNTED|higher_is_worse|pods"
+        "Deployments Total|DEPLOYS_TOTAL|neutral|deploys"
+        "Deployments NotReady|DEPLOYS_NOTREADY|higher_is_worse|deploys"
+        "DaemonSets Total|DS_TOTAL|neutral|ds"
+        "DaemonSets NotReady|DS_NOTREADY|higher_is_worse|ds"
+        "StatefulSets Total|STS_TOTAL|neutral|sts"
+        "StatefulSets NotReady|STS_NOTREADY|higher_is_worse|sts"
+        "PVCs Total|PVC_TOTAL|neutral|pvc"
+        "PVCs NotBound|PVC_NOTBOUND|higher_is_worse|pvc"
+        "Helm Releases Total|HELM_TOTAL|neutral|helm"
+        "Helm Releases Failed|HELM_FAILED|higher_is_worse|helm"
+    )
 
-    delta=$(calculate_delta "${PRE_NODES_READY}" "${POST_NODES_READY}")
-    printf "%-25s %10s %10s %10s %10s\n" "Nodes Ready" "${PRE_NODES_READY:-0}" "${POST_NODES_READY:-0}" "$delta" "$(get_delta_status 'nodes_ready' "$delta" 'lower_is_worse')"
+    local last_group=""
+    for metric_def in "${metrics[@]}"; do
+        IFS='|' read -r label var_suffix metric_type group <<< "${metric_def}"
 
-    delta=$(calculate_delta "${PRE_NODES_NOTREADY}" "${POST_NODES_NOTREADY}")
-    printf "%-25s %10s %10s %10s %10s\n" "Nodes NotReady" "${PRE_NODES_NOTREADY:-0}" "${POST_NODES_NOTREADY:-0}" "$delta" "$(get_delta_status 'nodes_notready' "$delta" 'higher_is_worse')"
+        # Add blank line between groups
+        if [[ -n "${last_group}" && "${group}" != "${last_group}" ]]; then
+            echo ""
+        fi
+        last_group="${group}"
 
-    echo ""
+        # Get PRE and POST values using indirect expansion
+        local pre_var="PRE_${var_suffix}"
+        local post_var="POST_${var_suffix}"
+        local pre_val="${!pre_var:-0}"
+        local post_val="${!post_var:-0}"
 
-    # Pods
-    delta=$(calculate_delta "${PRE_PODS_TOTAL}" "${POST_PODS_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "Pods Total" "${PRE_PODS_TOTAL:-0}" "${POST_PODS_TOTAL:-0}" "$delta" "$(get_delta_status 'pods_total' "$delta" 'neutral')"
+        # Calculate delta and status
+        local delta=$(calculate_delta "${pre_val}" "${post_val}")
+        local status=$(get_delta_status "${var_suffix}" "${delta}" "${metric_type}")
 
-    delta=$(calculate_delta "${PRE_PODS_RUNNING}" "${POST_PODS_RUNNING}")
-    printf "%-25s %10s %10s %10s %10s\n" "Pods Running" "${PRE_PODS_RUNNING:-0}" "${POST_PODS_RUNNING:-0}" "$delta" "$(get_delta_status 'pods_running' "$delta" 'lower_is_worse')"
-
-    delta=$(calculate_delta "${PRE_PODS_CRASHLOOP}" "${POST_PODS_CRASHLOOP}")
-    printf "%-25s %10s %10s %10s %10s\n" "Pods CrashLoopBackOff" "${PRE_PODS_CRASHLOOP:-0}" "${POST_PODS_CRASHLOOP:-0}" "$delta" "$(get_delta_status 'pods_crashloop' "$delta" 'higher_is_worse')"
-
-    delta=$(calculate_delta "${PRE_PODS_PENDING}" "${POST_PODS_PENDING}")
-    printf "%-25s %10s %10s %10s %10s\n" "Pods Pending" "${PRE_PODS_PENDING:-0}" "${POST_PODS_PENDING:-0}" "$delta" "$(get_delta_status 'pods_pending' "$delta" 'higher_is_worse')"
-
-    delta=$(calculate_delta "${PRE_PODS_COMPLETED}" "${POST_PODS_COMPLETED}")
-    printf "%-25s %10s %10s %10s %10s\n" "Pods Completed" "${PRE_PODS_COMPLETED:-0}" "${POST_PODS_COMPLETED:-0}" "$delta" "$(get_delta_status 'pods_completed' "$delta" 'neutral')"
-
-    delta=$(calculate_delta "${PRE_PODS_UNACCOUNTED}" "${POST_PODS_UNACCOUNTED}")
-    printf "%-25s %10s %10s %10s %10s\n" "Pods Unaccounted" "${PRE_PODS_UNACCOUNTED:-0}" "${POST_PODS_UNACCOUNTED:-0}" "$delta" "$(get_delta_status 'pods_unaccounted' "$delta" 'higher_is_worse')"
-
-    echo ""
-
-    # Deployments
-    delta=$(calculate_delta "${PRE_DEPLOYS_TOTAL}" "${POST_DEPLOYS_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "Deployments Total" "${PRE_DEPLOYS_TOTAL:-0}" "${POST_DEPLOYS_TOTAL:-0}" "$delta" "$(get_delta_status 'deploys_total' "$delta" 'neutral')"
-
-    delta=$(calculate_delta "${PRE_DEPLOYS_NOTREADY}" "${POST_DEPLOYS_NOTREADY}")
-    printf "%-25s %10s %10s %10s %10s\n" "Deployments NotReady" "${PRE_DEPLOYS_NOTREADY:-0}" "${POST_DEPLOYS_NOTREADY:-0}" "$delta" "$(get_delta_status 'deploys_notready' "$delta" 'higher_is_worse')"
-
-    echo ""
-
-    # DaemonSets
-    delta=$(calculate_delta "${PRE_DS_TOTAL}" "${POST_DS_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "DaemonSets Total" "${PRE_DS_TOTAL:-0}" "${POST_DS_TOTAL:-0}" "$delta" "$(get_delta_status 'ds_total' "$delta" 'neutral')"
-
-    delta=$(calculate_delta "${PRE_DS_NOTREADY}" "${POST_DS_NOTREADY}")
-    printf "%-25s %10s %10s %10s %10s\n" "DaemonSets NotReady" "${PRE_DS_NOTREADY:-0}" "${POST_DS_NOTREADY:-0}" "$delta" "$(get_delta_status 'ds_notready' "$delta" 'higher_is_worse')"
-
-    echo ""
-
-    # StatefulSets
-    delta=$(calculate_delta "${PRE_STS_TOTAL}" "${POST_STS_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "StatefulSets Total" "${PRE_STS_TOTAL:-0}" "${POST_STS_TOTAL:-0}" "$delta" "$(get_delta_status 'sts_total' "$delta" 'neutral')"
-
-    delta=$(calculate_delta "${PRE_STS_NOTREADY}" "${POST_STS_NOTREADY}")
-    printf "%-25s %10s %10s %10s %10s\n" "StatefulSets NotReady" "${PRE_STS_NOTREADY:-0}" "${POST_STS_NOTREADY:-0}" "$delta" "$(get_delta_status 'sts_notready' "$delta" 'higher_is_worse')"
-
-    echo ""
-
-    # PVCs
-    delta=$(calculate_delta "${PRE_PVC_TOTAL}" "${POST_PVC_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "PVCs Total" "${PRE_PVC_TOTAL:-0}" "${POST_PVC_TOTAL:-0}" "$delta" "$(get_delta_status 'pvc_total' "$delta" 'neutral')"
-
-    delta=$(calculate_delta "${PRE_PVC_NOTBOUND}" "${POST_PVC_NOTBOUND}")
-    printf "%-25s %10s %10s %10s %10s\n" "PVCs NotBound" "${PRE_PVC_NOTBOUND:-0}" "${POST_PVC_NOTBOUND:-0}" "$delta" "$(get_delta_status 'pvc_notbound' "$delta" 'higher_is_worse')"
-
-    echo ""
-
-    # Helm
-    delta=$(calculate_delta "${PRE_HELM_TOTAL}" "${POST_HELM_TOTAL}")
-    printf "%-25s %10s %10s %10s %10s\n" "Helm Releases Total" "${PRE_HELM_TOTAL:-0}" "${POST_HELM_TOTAL:-0}" "$delta" "$(get_delta_status 'helm_total' "$delta" 'neutral')"
-
-    delta=$(calculate_delta "${PRE_HELM_FAILED}" "${POST_HELM_FAILED}")
-    printf "%-25s %10s %10s %10s %10s\n" "Helm Releases Failed" "${PRE_HELM_FAILED:-0}" "${POST_HELM_FAILED:-0}" "$delta" "$(get_delta_status 'helm_failed' "$delta" 'higher_is_worse')"
+        printf "%-25s %10s %10s %10s %10s\n" "${label}" "${pre_val}" "${post_val}" "${delta}" "${status}"
+    done
 
     echo ""
 }
 
-# Generate plain English summary
+#===============================================================================
+# Plain English Summary (Data-Driven)
+#===============================================================================
+
+# Generate plain English summary using data-driven approach
 generate_layman_summary() {
     echo ""
     echo "############################################################################"
@@ -294,97 +273,41 @@ generate_layman_summary() {
     local improvements=()
     local info_changes=()
 
-    # Check nodes
-    local nodes_notready_delta=$((${POST_NODES_NOTREADY:-0} - ${PRE_NODES_NOTREADY:-0}))
-    if [ "$nodes_notready_delta" -gt 0 ]; then
-        critical_issues+=("${nodes_notready_delta} more node(s) became NotReady")
-        has_changes=true
-    elif [ "$nodes_notready_delta" -lt 0 ]; then
-        improvements+=("$((-nodes_notready_delta)) node(s) recovered to Ready state")
-        has_changes=true
-    fi
+    # Check definitions: "var_suffix|category|worse_msg|better_msg"
+    # Categories: critical, warning, info
+    local checks=(
+        "NODES_NOTREADY|critical|more node(s) became NotReady|node(s) recovered to Ready state"
+        "PODS_CRASHLOOP|critical|more pod(s) are now crashing (CrashLoopBackOff)|pod(s) stopped crashing"
+        "PODS_PENDING|warning|more pod(s) are stuck in Pending state|pod(s) moved from Pending to Running"
+        "PODS_UNACCOUNTED|warning|more pod(s) in unexpected state (Failed/Unknown/Error)|pod(s) recovered from unexpected state"
+        "DEPLOYS_NOTREADY|warning|more deployment(s) are not fully ready|deployment(s) became fully ready"
+        "DS_NOTREADY|warning|more DaemonSet(s) are not fully ready|DaemonSet(s) became fully ready"
+        "STS_NOTREADY|warning|more StatefulSet(s) are not fully ready|StatefulSet(s) became fully ready"
+        "PVC_NOTBOUND|warning|more PVC(s) are not bound|PVC(s) became bound"
+        "HELM_FAILED|warning|more Helm release(s) failed|Helm release(s) recovered"
+    )
 
-    # Check pods crashloop
-    local crashloop_delta=$((${POST_PODS_CRASHLOOP:-0} - ${PRE_PODS_CRASHLOOP:-0}))
-    if [ "$crashloop_delta" -gt 0 ]; then
-        critical_issues+=("${crashloop_delta} more pod(s) are now crashing (CrashLoopBackOff)")
-        has_changes=true
-    elif [ "$crashloop_delta" -lt 0 ]; then
-        improvements+=("$((-crashloop_delta)) pod(s) stopped crashing")
-        has_changes=true
-    fi
+    for check_def in "${checks[@]}"; do
+        IFS='|' read -r var_suffix category worse_msg better_msg <<< "${check_def}"
 
-    # Check pods pending
-    local pending_delta=$((${POST_PODS_PENDING:-0} - ${PRE_PODS_PENDING:-0}))
-    if [ "$pending_delta" -gt 0 ]; then
-        warnings+=("${pending_delta} more pod(s) are stuck in Pending state")
-        has_changes=true
-    elif [ "$pending_delta" -lt 0 ]; then
-        improvements+=("$((-pending_delta)) pod(s) moved from Pending to Running")
-        has_changes=true
-    fi
+        local pre_var="PRE_${var_suffix}"
+        local post_var="POST_${var_suffix}"
+        local delta=$((${!post_var:-0} - ${!pre_var:-0}))
 
-    # Check pods unaccounted
-    local unaccounted_delta=$((${POST_PODS_UNACCOUNTED:-0} - ${PRE_PODS_UNACCOUNTED:-0}))
-    if [ "$unaccounted_delta" -gt 0 ]; then
-        warnings+=("${unaccounted_delta} more pod(s) in unexpected state (Failed/Unknown/Error)")
-        has_changes=true
-    elif [ "$unaccounted_delta" -lt 0 ]; then
-        improvements+=("$((-unaccounted_delta)) pod(s) recovered from unexpected state")
-        has_changes=true
-    fi
+        if [ "$delta" -gt 0 ]; then
+            if [[ "${category}" == "critical" ]]; then
+                critical_issues+=("${delta} ${worse_msg}")
+            else
+                warnings+=("${delta} ${worse_msg}")
+            fi
+            has_changes=true
+        elif [ "$delta" -lt 0 ]; then
+            improvements+=("$((-delta)) ${better_msg}")
+            has_changes=true
+        fi
+    done
 
-    # Check deployments
-    local deploys_notready_delta=$((${POST_DEPLOYS_NOTREADY:-0} - ${PRE_DEPLOYS_NOTREADY:-0}))
-    if [ "$deploys_notready_delta" -gt 0 ]; then
-        warnings+=("${deploys_notready_delta} more deployment(s) are not fully ready")
-        has_changes=true
-    elif [ "$deploys_notready_delta" -lt 0 ]; then
-        improvements+=("$((-deploys_notready_delta)) deployment(s) became fully ready")
-        has_changes=true
-    fi
-
-    # Check DaemonSets
-    local ds_notready_delta=$((${POST_DS_NOTREADY:-0} - ${PRE_DS_NOTREADY:-0}))
-    if [ "$ds_notready_delta" -gt 0 ]; then
-        warnings+=("${ds_notready_delta} more DaemonSet(s) are not fully ready")
-        has_changes=true
-    elif [ "$ds_notready_delta" -lt 0 ]; then
-        improvements+=("$((-ds_notready_delta)) DaemonSet(s) became fully ready")
-        has_changes=true
-    fi
-
-    # Check StatefulSets
-    local sts_notready_delta=$((${POST_STS_NOTREADY:-0} - ${PRE_STS_NOTREADY:-0}))
-    if [ "$sts_notready_delta" -gt 0 ]; then
-        warnings+=("${sts_notready_delta} more StatefulSet(s) are not fully ready")
-        has_changes=true
-    elif [ "$sts_notready_delta" -lt 0 ]; then
-        improvements+=("$((-sts_notready_delta)) StatefulSet(s) became fully ready")
-        has_changes=true
-    fi
-
-    # Check PVCs
-    local pvc_notbound_delta=$((${POST_PVC_NOTBOUND:-0} - ${PRE_PVC_NOTBOUND:-0}))
-    if [ "$pvc_notbound_delta" -gt 0 ]; then
-        warnings+=("${pvc_notbound_delta} more PVC(s) are not bound")
-        has_changes=true
-    elif [ "$pvc_notbound_delta" -lt 0 ]; then
-        improvements+=("$((-pvc_notbound_delta)) PVC(s) became bound")
-        has_changes=true
-    fi
-
-    # Check Helm
-    local helm_failed_delta=$((${POST_HELM_FAILED:-0} - ${PRE_HELM_FAILED:-0}))
-    if [ "$helm_failed_delta" -gt 0 ]; then
-        warnings+=("${helm_failed_delta} more Helm release(s) failed")
-        has_changes=true
-    elif [ "$helm_failed_delta" -lt 0 ]; then
-        improvements+=("$((-helm_failed_delta)) Helm release(s) recovered")
-        has_changes=true
-    fi
-
-    # Check pod count changes
+    # Check pod count changes (info only)
     local pods_delta=$((${POST_PODS_TOTAL:-0} - ${PRE_PODS_TOTAL:-0}))
     if [ "$pods_delta" -ne 0 ]; then
         if [ "$pods_delta" -gt 0 ]; then
@@ -395,33 +318,22 @@ generate_layman_summary() {
         has_changes=true
     fi
 
-    # Print critical issues
-    if [ ${#critical_issues[@]} -gt 0 ]; then
-        for issue in "${critical_issues[@]}"; do
-            echo "  * CRITICAL: ${issue}"
-        done
-    fi
+    # Print results by category
+    for issue in "${critical_issues[@]}"; do
+        echo "  * CRITICAL: ${issue}"
+    done
 
-    # Print warnings
-    if [ ${#warnings[@]} -gt 0 ]; then
-        for warning in "${warnings[@]}"; do
-            echo "  * WARNING: ${warning}"
-        done
-    fi
+    for warning in "${warnings[@]}"; do
+        echo "  * WARNING: ${warning}"
+    done
 
-    # Print improvements
-    if [ ${#improvements[@]} -gt 0 ]; then
-        for improvement in "${improvements[@]}"; do
-            echo "  * IMPROVED: ${improvement}"
-        done
-    fi
+    for improvement in "${improvements[@]}"; do
+        echo "  * IMPROVED: ${improvement}"
+    done
 
-    # Print info changes
-    if [ ${#info_changes[@]} -gt 0 ]; then
-        for info in "${info_changes[@]}"; do
-            echo "  * INFO: ${info}"
-        done
-    fi
+    for info in "${info_changes[@]}"; do
+        echo "  * INFO: ${info}"
+    done
 
     if [ "$has_changes" = false ]; then
         echo "  No significant changes detected between PRE and POST states."
@@ -630,147 +542,6 @@ compare_events() {
     echo ""
 }
 
-# Display comparison summary to CLI
-# NOTE: Deprecated as of v3.6. Main script now displays full comparison report
-# using 'cat'. Kept for backward compatibility.
-display_comparison_summary() {
-    local diff_file="$1"
-    local cluster_name="$2"
-
-    echo ""
-    echo -e "${CYAN}================================================================================${NC}"
-    echo -e "${CYAN}                    COMPARISON REPORT SUMMARY${NC}"
-    echo -e "${CYAN}================================================================================${NC}"
-    echo ""
-    echo -e "${BLUE}Cluster:${NC} ${cluster_name}"
-    echo -e "${BLUE}Report:${NC}  ${diff_file}"
-    echo ""
-
-    # Parse the diff file for critical metrics
-    local critical_count=$(grep -c "\[CRITICAL\]" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
-    local warning_count=$(grep -c "\[WARNING\]" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
-    local worse_count=$(grep -c "\[WORSE\]" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
-    local better_count=$(grep -c "\[BETTER\]" "${diff_file}" 2>/dev/null | tr -d ' \n' || echo "0")
-
-    # Ensure they're valid integers
-    critical_count=${critical_count:-0}
-    warning_count=${warning_count:-0}
-    worse_count=${worse_count:-0}
-    better_count=${better_count:-0}
-
-    # Display PRE vs POST metrics table from the comparison file
-    echo "--- PRE vs POST METRICS ---"
-    echo ""
-
-    # Extract and display the metrics table from the comparison report
-    local in_table=false
-    local table_found=false
-    while IFS= read -r line; do
-        # Start capturing after the PRE vs POST header
-        if [[ "${line}" == *"PRE vs POST COMPARISON"* ]]; then
-            in_table=true
-            table_found=true
-            continue
-        fi
-        # Stop at the next section (PLAIN ENGLISH SUMMARY or other headers)
-        if [[ "${in_table}" == "true" ]] && [[ "${line}" == "####"* ]]; then
-            in_table=false
-            break
-        fi
-        # Print table lines
-        if [[ "${in_table}" == "true" ]] && [[ -n "${line}" ]]; then
-            # Color code based on status
-            if [[ "${line}" == *"[WORSE]"* ]]; then
-                echo -e "  ${RED}${line}${NC}"
-            elif [[ "${line}" == *"[BETTER]"* ]]; then
-                echo -e "  ${GREEN}${line}${NC}"
-            elif [[ "${line}" == *"[CHANGED]"* ]]; then
-                echo -e "  ${YELLOW}${line}${NC}"
-            elif [[ "${line}" == "Metric"* ]] || [[ "${line}" == "---"* ]]; then
-                echo -e "  ${CYAN}${line}${NC}"
-            else
-                echo "  ${line}"
-            fi
-        fi
-    done < "${diff_file}"
-
-    if [[ "${table_found}" == "false" ]]; then
-        echo "  (Metrics table not found in comparison report)"
-    fi
-    echo ""
-
-    echo "--- STATUS OVERVIEW ---"
-    echo ""
-
-    if [ "$critical_count" -gt 0 ]; then
-        echo -e "  ${RED}[X] CRITICAL Issues: ${critical_count}${NC}"
-    else
-        echo -e "  ${GREEN}[OK] CRITICAL Issues: 0${NC}"
-    fi
-
-    if [ "$warning_count" -gt 0 ]; then
-        echo -e "  ${YELLOW}[!] Warnings: ${warning_count}${NC}"
-    else
-        echo -e "  ${GREEN}[OK] Warnings: 0${NC}"
-    fi
-
-    if [ "$worse_count" -gt 0 ]; then
-        echo -e "  ${RED}[!] Metrics Worsened: ${worse_count}${NC}"
-    fi
-
-    if [ "$better_count" -gt 0 ]; then
-        echo -e "  ${GREEN}[+] Metrics Improved: ${better_count}${NC}"
-    fi
-
-    echo ""
-
-    # Show plain English summary from the report
-    echo "--- CHANGE SUMMARY ---"
-    echo ""
-    local in_summary=false
-    while IFS= read -r line; do
-        if [[ "${line}" == *"PLAIN ENGLISH SUMMARY"* ]]; then
-            in_summary=true
-            continue
-        fi
-        if [[ "${in_summary}" == "true" ]] && [[ "${line}" == "####"* ]]; then
-            in_summary=false
-            break
-        fi
-        if [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"CRITICAL:"* ]]; then
-            echo -e "  ${RED}${line}${NC}"
-        elif [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"WARNING:"* ]]; then
-            echo -e "  ${YELLOW}${line}${NC}"
-        elif [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"IMPROVED:"* ]]; then
-            echo -e "  ${GREEN}${line}${NC}"
-        elif [[ "${in_summary}" == "true" ]] && [[ "${line}" == *"INFO:"* ]]; then
-            echo -e "  ${CYAN}${line}${NC}"
-        elif [[ "${in_summary}" == "true" ]] && [[ -n "${line}" ]] && [[ "${line}" != "What changed"* ]]; then
-            echo "  ${line}"
-        fi
-    done < "${diff_file}"
-    echo ""
-
-    # Overall status
-    echo "--- OVERALL STATUS ---"
-    echo ""
-
-    if [ "$critical_count" -gt 0 ]; then
-        echo -e "  ${RED}RESULT: FAILED - Critical issues detected${NC}"
-        echo -e "  ${RED}ACTION: Investigate and resolve critical issues before proceeding${NC}"
-    elif [ "$warning_count" -gt 0 ] || [ "$worse_count" -gt 0 ]; then
-        echo -e "  ${YELLOW}RESULT: WARNINGS - Some warnings or degraded metrics detected${NC}"
-        echo -e "  ${YELLOW}ACTION: Monitor warnings, may resolve during rollout completion${NC}"
-    else
-        echo -e "  ${GREEN}RESULT: PASSED - All health checks successful${NC}"
-        echo -e "  ${GREEN}Cluster is healthy after the change${NC}"
-    fi
-
-    echo ""
-    echo -e "${CYAN}================================================================================${NC}"
-    echo ""
-}
-
 #===============================================================================
 # Export Functions
 #===============================================================================
@@ -782,7 +553,6 @@ export -f generate_comparison_report
 export -f generate_metrics_comparison
 export -f generate_layman_summary
 export -f generate_final_verdict
-export -f display_comparison_summary
 export -f compare_critical_health
 export -f compare_workloads
 export -f compare_storage

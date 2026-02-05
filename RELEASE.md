@@ -1,5 +1,156 @@
 # K8s Health Check Tool - Release Notes
 
+## Version 3.8 (2026-02-05)
+
+### Codebase Refactoring & Optimization
+
+Major internal refactoring to eliminate duplicated code, consolidate shared logic, and clean up dead code. **~455 lines removed** with zero functional changes.
+
+### Phase 1: High-Impact Consolidations
+
+#### 1.1 Shared `prepare_tmc_contexts()` Function
+
+**Problem:** Identical function existed in both `k8s-health-check.sh` and `k8s-cluster-upgrade.sh`.
+
+**Solution:** Extracted to `lib/tmc.sh` as a shared function.
+
+| File | Change |
+|------|--------|
+| `lib/tmc.sh` | Added `prepare_tmc_contexts()` (+35 lines) |
+| `k8s-health-check.sh` | Removed local function (-34 lines) |
+| `k8s-cluster-upgrade.sh` | Removed `prepare_upgrade_tmc_contexts()`, updated call (-26 lines) |
+
+#### 1.2 Section 18 Reuses `health.sh`
+
+**Problem:** `lib/sections/18-cluster-summary.sh` duplicated ~90 lines of kubectl metric collection from `lib/health.sh`.
+
+**Solution:** Refactored to call `collect_health_metrics()` and `calculate_health_status()` from health.sh.
+
+| Before | After |
+|--------|-------|
+| 205 lines | ~105 lines |
+| Duplicate metric collection | Reuses `HEALTH_*` variables |
+| Duplicate status calculation | Calls `calculate_health_status()` |
+
+**Note:** Output format preserved exactly for backward compatibility with `comparison.sh` grep patterns.
+
+#### 1.3 Standardized Timestamp Usage
+
+**Problem:** `k8s-cluster-upgrade.sh` used `date '+%Y%m%d_%H%M%S'` directly (4 occurrences) instead of `get_timestamp()`.
+
+**Solution:** Replaced all 4 occurrences with `get_timestamp` from `lib/common.sh`.
+
+#### 1.4 Centralized `DEFAULT_BATCH_SIZE` Constant
+
+**Problem:** `BATCH_SIZE=6` hardcoded in all 3 main scripts.
+
+**Solution:** Added `DEFAULT_BATCH_SIZE=6` to `lib/common.sh`, updated all scripts to use `${DEFAULT_BATCH_SIZE}`.
+
+### Phase 2: Internal Refactors
+
+#### 2.1 Consolidated TMC Context Functions
+
+**Problem:** `ensure_tmc_context()` and `ensure_tmc_context_for_environment()` in `lib/tmc-context.sh` shared ~80% identical logic.
+
+**Solution:** Extracted shared core into `_setup_tmc_context(environment)`. Both public functions now resolve environment and call the shared core.
+
+| Before | After |
+|--------|-------|
+| ~180 lines (combined) | ~75 lines (combined) |
+| Duplicated context setup | Single `_setup_tmc_context()` core |
+
+#### 2.2 Data-Driven `generate_metrics_comparison()`
+
+**Problem:** 19 repetitive `calculate_delta` + `printf` blocks in `lib/comparison.sh`.
+
+**Solution:** Replaced with array of metric definitions + loop:
+
+```bash
+local metrics=(
+    "Nodes Total|NODES_TOTAL|neutral|nodes"
+    "Nodes Ready|NODES_READY|lower_is_worse|nodes"
+    ...
+)
+for metric_def in "${metrics[@]}"; do
+    # Parse and process each metric
+done
+```
+
+#### 2.3 Data-Driven `generate_layman_summary()`
+
+**Problem:** 10 repetitive delta-check-and-categorize blocks in `lib/comparison.sh`.
+
+**Solution:** Replaced with array of check definitions + loop:
+
+```bash
+local checks=(
+    "NODES_NOTREADY|critical|more node(s) became NotReady|node(s) recovered"
+    "PODS_CRASHLOOP|critical|more pod(s) crashing|pod(s) stopped crashing"
+    ...
+)
+```
+
+### Phase 3: Cleanup
+
+#### 3.1 Consolidated Safe Comparison Functions
+
+**Problem:** Three nearly identical functions `safe_gt()`, `safe_eq()`, `safe_ne()` in `lib/common.sh`.
+
+**Solution:** Added generic `safe_compare(val1, operator, val2)`, simplified existing functions to one-line wrappers:
+
+```bash
+safe_compare() {
+    local val1=$(clean_integer "$1")
+    local operator="$2"
+    local val2=$(clean_integer "$3")
+    [ -n "${val1}" ] && [ -n "${val2}" ] && [ "${val1}" "${operator}" "${val2}" ] 2>/dev/null
+}
+
+safe_gt() { safe_compare "$1" -gt "$2"; }
+safe_eq() { safe_compare "$1" -eq "$2"; }
+safe_ne() { safe_compare "$1" -ne "$2"; }
+```
+
+#### 3.2 Removed Dead Code
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `lib/common.sh` | `get_environment_info()` | Empty function, never called |
+| `lib/comparison.sh` | `display_comparison_summary()` | Deprecated v3.6, only used in Archive/v3.2 |
+
+### Files Modified Summary
+
+| File | Changes | Lines |
+|------|---------|-------|
+| `lib/tmc.sh` | Added `prepare_tmc_contexts()` | +35 |
+| `lib/tmc-context.sh` | Extracted `_setup_tmc_context()` core | -105 |
+| `lib/sections/18-cluster-summary.sh` | Reuse health.sh functions | -100 |
+| `lib/comparison.sh` | Data-driven functions, removed deprecated | -195 |
+| `lib/common.sh` | `DEFAULT_BATCH_SIZE`, `safe_compare()`, cleanup | -15 |
+| `k8s-health-check.sh` | Removed duplicate function, use constant | -34 |
+| `k8s-cluster-upgrade.sh` | Removed duplicate, timestamps, constant | -30 |
+| `k8s-ops-cmd.sh` | Use `DEFAULT_BATCH_SIZE` | 0 |
+
+**Total: ~455 lines removed**
+
+### Breaking Changes
+
+**None** - All functionality preserved:
+- All command-line options unchanged
+- Output format identical (comparison.sh grep patterns compatible)
+- Health status classification unchanged
+- Caching behavior unchanged
+
+### Benefits
+
+1. **Single source of truth** - Shared functions in library modules
+2. **Easier maintenance** - Changes in one place propagate everywhere
+3. **Reduced cognitive load** - Data-driven patterns easier to understand
+4. **Less code** - ~455 lines removed, fewer bugs possible
+5. **Better testability** - Centralized logic easier to test
+
+---
+
 ## Version 3.7 (2026-02-05)
 
 ### Parallel Upgrade Mode

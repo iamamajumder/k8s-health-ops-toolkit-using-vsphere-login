@@ -29,7 +29,7 @@ source "${SCRIPT_DIR}/lib/tmc.sh"
 DEFAULT_TIMEOUT=30          # Default command timeout in seconds
 DEFAULT_CONFIG="./clusters.conf"
 OUTPUT_DIR="${SCRIPT_DIR}/ops-results"
-BATCH_SIZE=6                # Default batch size for parallel execution
+BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
 SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
 

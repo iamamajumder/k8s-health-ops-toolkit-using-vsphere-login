@@ -37,7 +37,7 @@ DRY_RUN=false
 SINGLE_CLUSTER=""
 CONFIG_FILE=""
 PARALLEL_MODE=false
-BATCH_SIZE=6
+BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 
 ################################################################################
 # Usage
@@ -169,7 +169,7 @@ run_pre_health_check() {
 
         if [[ -n "${latest_pre}" && -f "${latest_pre}" ]]; then
             # Copy PRE health check to upgrade results with timestamped name
-            local timestamp=$(date '+%Y%m%d_%H%M%S')
+            local timestamp=$(get_timestamp)
             cp "${latest_pre}" "${output_dir}/pre-hcr-${timestamp}.txt"
             echo "${output_base_dir}" > "${output_dir}/.pre-results-path"
             success "PRE-upgrade health check completed"
@@ -261,7 +261,7 @@ execute_upgrade() {
     debug "  Provisioner: '${provisioner}'"
 
     # Timestamped upgrade log filename
-    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local timestamp=$(get_timestamp)
     local upgrade_log="${output_dir}/upgrade-log-${timestamp}.txt"
 
     # Log upgrade command
@@ -529,7 +529,7 @@ run_post_health_check() {
 
         if [[ -n "${latest_post}" && -f "${latest_post}" ]]; then
             # Copy POST health check to upgrade results with timestamped name
-            local timestamp=$(date '+%Y%m%d_%H%M%S')
+            local timestamp=$(get_timestamp)
             cp "${latest_post}" "${output_dir}/post-hcr-${timestamp}.txt"
 
             # Comparison reports stay in h-c-r directory, no need to copy (avoid duplication)
@@ -554,7 +554,7 @@ upgrade_single_cluster() {
     local cluster_name="$1"
 
     # Create output directory (new consolidated structure)
-    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local timestamp=$(get_timestamp)
     local output_base_dir="${HOME}/k8s-health-check/output"
     local output_dir="${output_base_dir}/${cluster_name}/upgrade"
     mkdir -p "${output_dir}"
@@ -823,36 +823,6 @@ monitor_and_post_upgrade() {
 }
 
 ################################################################################
-# Prepare TMC Contexts (Sequential - avoid race conditions)
-################################################################################
-prepare_upgrade_tmc_contexts() {
-    local config_file="$1"
-
-    progress "Preparing TMC contexts for all clusters..."
-
-    local cluster_list=$(get_cluster_list "${config_file}")
-    local cluster_count=$(count_clusters "${config_file}")
-    local current=0
-    local failed_clusters=()
-
-    while IFS= read -r cluster_name; do
-        current=$((current + 1))
-        debug "[${current}/${cluster_count}] Preparing TMC context for ${cluster_name}..."
-
-        if ! ensure_tmc_context "${cluster_name}"; then
-            warning "Failed to prepare TMC context for ${cluster_name}"
-            failed_clusters+=("${cluster_name}")
-        fi
-    done < <(echo "${cluster_list}")
-
-    if [ ${#failed_clusters[@]} -gt 0 ]; then
-        warning "TMC context preparation failed for ${#failed_clusters[@]} cluster(s)"
-    fi
-
-    success "TMC contexts prepared"
-}
-
-################################################################################
 # Upgrade Clusters in Parallel (Batch-based)
 ################################################################################
 upgrade_clusters_parallel() {
@@ -878,7 +848,7 @@ upgrade_clusters_parallel() {
     echo ""
 
     # Prepare TMC contexts sequentially first (avoid race conditions)
-    prepare_upgrade_tmc_contexts "${config_file}"
+    prepare_tmc_contexts "${config_file}"
     echo ""
 
     # Convert cluster list to array

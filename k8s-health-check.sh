@@ -39,7 +39,7 @@ done
 CHECK_MODE=""
 PRE_RESULTS_DIR=""
 PARALLEL_MODE="true"       # Parallel execution enabled by default
-BATCH_SIZE=6               # Default batch size for parallel execution
+BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 SINGLE_CLUSTER=""          # Single cluster mode (via -c flag)
 
 #===============================================================================
@@ -425,44 +425,6 @@ process_cluster_parallel() {
         echo "===CLUSTER_END==="
     } >> "${results_file}"
     return 0
-}
-
-#===============================================================================
-# Prepare TMC Contexts (Sequential - to avoid race conditions)
-#===============================================================================
-
-prepare_tmc_contexts() {
-    local config_file="$1"
-
-    # Note: Credentials will be prompted inside ensure_tmc_context() only if
-    # a new context needs to be created (existing valid contexts are reused)
-
-    progress "Preparing TMC contexts for all clusters..."
-
-    local cluster_list=$(get_cluster_list "${config_file}")
-    local cluster_count=$(count_clusters "${config_file}")
-    local current=0
-    local failed_clusters=()
-
-    while IFS= read -r cluster_name; do
-        current=$((current + 1))
-        debug "[${current}/${cluster_count}] Preparing TMC context for ${cluster_name}..."
-
-        # Note: Don't suppress stderr - it contains password prompts and important errors
-        if ! ensure_tmc_context "${cluster_name}"; then
-            warning "Failed to prepare TMC context for ${cluster_name}"
-            failed_clusters+=("${cluster_name}")
-        fi
-    done < <(echo "${cluster_list}")
-
-    if [ ${#failed_clusters[@]} -gt 0 ]; then
-        warning "TMC context preparation failed for ${#failed_clusters[@]} cluster(s)"
-        for fc in "${failed_clusters[@]}"; do
-            debug "  - ${fc}"
-        done
-    fi
-
-    success "TMC contexts prepared"
 }
 
 #===============================================================================
