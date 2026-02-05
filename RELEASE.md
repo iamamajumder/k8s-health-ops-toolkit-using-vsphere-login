@@ -133,6 +133,100 @@ safe_ne() { safe_compare "$1" -ne "$2"; }
 
 **Total: ~455 lines removed**
 
+### Bug Fixes: Parallel Mode and Output Structure
+
+#### 4.1 k8s-ops-cmd.sh: Credentials Not Prompted in Single Cluster Mode
+
+**Issue**: When using `-c` flag or default mode, TMC credentials were not prompted if context was expired (>12 hours) or needed creation. However, it worked fine with `-m` flag (management discovery).
+
+**Root Cause**: In single cluster mode, `execute_on_cluster()` was called in parallel for each cluster, with multiple processes trying to create/verify TMC context simultaneously, causing credential prompt interference.
+
+**Solution**: Call `prepare_tmc_contexts()` sequentially **before** parallel execution starts (line 615). Ensures all TMC contexts are created once with prompts visible upfront, then all clusters reuse existing contexts in parallel.
+
+**Files Modified:**
+- `k8s-ops-cmd.sh` - Added credential prep call before parallel execution
+
+#### 4.2 k8s-ops-cmd.sh: Output Directory Not Following v3.8 Structure
+
+**Issue**: Old output path: `/k8s-health-check/ops-results/ops-20260205_000842/output.txt`
+Expected: `/k8s-health-check/output/{cluster-name}/ops/`
+
+**Root Cause**: Old `OUTPUT_DIR` constant and aggregated results_dir still used instead of new per-cluster structure.
+
+**Solution**:
+- Removed old `OUTPUT_DIR` constant (line 31)
+- Use temp directory for result aggregation during execution
+- Output now follows v3.8 structure: `${HOME}/k8s-health-check/output/{cluster-name}/ops/`
+- Aggregated output saved to first cluster's ops/ for reference
+- Clear display showing both per-cluster and aggregated paths
+
+**Files Modified:**
+- `k8s-ops-cmd.sh` - Updated output paths to v3.8 structure, version bumped to 3.8
+
+#### 4.3 k8s-cluster-upgrade.sh: POST Health Check Skipped in Parallel Mode
+
+**Issue**: When running `--parallel` mode, POST health check was skipped for **all clusters**. Works fine with single cluster (`-c`) mode.
+
+**Root Cause**: Line 786 used `> /dev/null 2>&1` which suppressed all output. When `monitor_upgrade_progress()` had issues (returned 1 or 2), POST was skipped with no visibility into why.
+
+**Solution**: Changed output redirection from `> /dev/null 2>&1` to `>> "${upgrade_log}" 2>&1` (lines 783-840):
+- All monitoring output now goes to upgrade log file for debugging
+- Added explicit logging of monitor result, duration, and POST health check status
+- Real-time progress display during batch completion (shows ✓/✗/T indicators)
+
+**Files Modified:**
+- `k8s-cluster-upgrade.sh` - Fixed logging in `monitor_and_post_upgrade()` function
+
+#### 4.4 k8s-cluster-upgrade.sh: Version Matching Too Strict for VMware Suffixes
+
+**Issue**: Monitoring times out because node version check (lines 388-400) was too strict. VMware adds suffixes like `+vmware.1`, causing mismatches:
+- API server: `v1.29.1`
+- Node kubelet: `v1.29.1+vmware.1`
+- Result: grep fails to match, `nodes_upgraded=0`, monitoring times out
+
+**Solution**: Extract base version before comparison (lines 388-405):
+```bash
+# Extract base version (e.g., v1.29.1 from v1.29.1+vmware.1)
+local base_version=$(echo "${current_version}" | sed 's/+.*//' | tr -d ' \n\r')
+nodes_upgraded=$(echo "${node_versions}" | grep -c "${base_version}" || true)
+```
+
+**Files Modified:**
+- `k8s-cluster-upgrade.sh` - Fixed version matching in `monitor_upgrade_progress()` function, added debug output for version checks
+
+#### 4.5 k8s-cluster-upgrade.sh: Timeout Question Clarified
+
+**Question**: How does timeout work when running parallel upgrades with different node counts?
+
+**Answer**: Each cluster gets its **own independent timeout** calculated based on its node count:
+- Cluster A (3 nodes) → timeout = 3 × 5 min/node = 15 minutes
+- Cluster B (7 nodes) → timeout = 7 × 5 min/node = 35 minutes
+- Cluster C (5 nodes) → timeout = 5 × 5 min/node = 25 minutes
+
+All three run in parallel with their own timeouts. Cluster A could complete/timeout at 15 min while Cluster B is still running until 35 min. Each process independently monitors with its calculated timeout.
+
+#### 4.6 k8s-health-check.sh: Redundant Section Header Cleanup
+
+**Issue**: POST health check displayed redundant "PRE vs POST Comparison" section header. The comparison report file already contains its own headers, creating duplicate output.
+
+**Solution**: Removed wrapper section header (line 773) and extra separators. The comparison report file already has:
+- "KUBERNETES CLUSTER HEALTH CHECK - COMPARISON REPORT" header
+- "PRE vs POST COMPARISON" table header
+- Its own separators and formatting
+
+**Files Modified:**
+- `k8s-health-check.sh` - Removed redundant `print_section()` and extra separators
+
+### Summary of Changes
+
+| Component | Issue | Fix | Version Impact |
+|-----------|-------|-----|-----------------|
+| k8s-ops-cmd.sh | Credentials not prompted (-c flag) | Sequential context prep before parallel | 3.5 → 3.8 |
+| k8s-ops-cmd.sh | Old output directory structure | Per-cluster v3.8 structure | 3.5 → 3.8 |
+| k8s-cluster-upgrade.sh | POST skipped in parallel mode | File logging instead of /dev/null | 3.7 → 3.8 |
+| k8s-cluster-upgrade.sh | VMware version suffix mismatch | Base version extraction | 3.7 → 3.8 |
+| k8s-health-check.sh | Redundant header in POST output | Remove wrapper section | 3.8 |
+
 ### Breaking Changes
 
 **None** - All functionality preserved:

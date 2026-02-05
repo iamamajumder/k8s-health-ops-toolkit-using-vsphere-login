@@ -1,10 +1,10 @@
 #!/bin/bash
 #===============================================================================
-# Kubernetes Multi-Cluster Ops Command Script v3.5
+# Kubernetes Multi-Cluster Ops Command Script v3.8
 # Purpose: Execute the same command across all clusters in clusters.conf
 #          or dynamically discover clusters from TMC management cluster
 #          with proper TMC context/kubeconfig setup and parallel execution
-# v3.5: Added management cluster discovery via -m flag
+# v3.8: Fixed credential prompts for -c flag, migrated to new output directory structure
 #===============================================================================
 
 set +e          # Disable exit-on-error
@@ -28,7 +28,6 @@ source "${SCRIPT_DIR}/lib/tmc.sh"
 
 DEFAULT_TIMEOUT=30          # Default command timeout in seconds
 DEFAULT_CONFIG="./clusters.conf"
-OUTPUT_DIR="${SCRIPT_DIR}/ops-results"
 BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
 SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
@@ -39,7 +38,7 @@ SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
 
 show_usage() {
     cat << EOF
-Kubernetes Multi-Cluster Ops Command Script v3.5
+Kubernetes Multi-Cluster Ops Command Script v3.8
 
 Usage:
   $0 [OPTIONS] "<command>" [clusters.conf]
@@ -608,12 +607,20 @@ run_ops_command() {
         source_description="Config File (${config_file})"
     fi
 
-    # Create output directory
-    local timestamp=$(get_timestamp)
-    local results_dir="${OUTPUT_DIR}/ops-${timestamp}"
-    mkdir -p "${results_dir}"
+    # Prepare TMC contexts sequentially BEFORE parallel execution to handle credential prompts
+    # This ensures credentials are prompted once upfront, not during parallel operations
+    if [[ -z "${mgmt_env}" ]]; then
+        # For file-based mode: prepare contexts for all clusters in config
+        progress "Preparing TMC contexts for clusters..."
+        if ! prepare_tmc_contexts "${config_file}"; then
+            error "Failed to prepare TMC contexts"
+            exit 1
+        fi
+    fi
+    # Note: For management discovery mode (-m), context is already prepared at line 570
 
-    local output_file="${results_dir}/output.txt"
+    # Create timestamp for output files
+    local timestamp=$(get_timestamp)
 
     # Display banner
     echo ""
@@ -629,42 +636,48 @@ run_ops_command() {
     fi
     echo ""
 
-    # Note: Credentials will be prompted inside ensure_tmc_context() only if
-    # a new context needs to be created (existing valid contexts are reused)
-
-    # Define results file path (used by both modes)
-    local results_file="${results_dir}/raw_results.txt"
+    # Use temp directory for collecting results during execution
+    local temp_results_dir=$(mktemp -d)
+    local results_file="${temp_results_dir}/raw_results.txt"
 
     # Execute commands
     if [[ -n "${mgmt_env}" ]]; then
         # Use list-based execution for management discovery mode
         if [[ "${parallel}" == "true" ]]; then
-            run_parallel_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}" "${batch_size}" "${timestamp}"
+            run_parallel_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${temp_results_dir}" "${batch_size}" "${timestamp}"
         else
-            run_sequential_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${results_dir}" "${timestamp}"
+            run_sequential_with_list "${command}" "${cluster_list}" "${timeout_sec}" "${temp_results_dir}" "${timestamp}"
         fi
     else
         # Use file-based execution for config file mode
         if [[ "${parallel}" == "true" ]]; then
-            run_parallel "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${batch_size}" "${timestamp}"
+            run_parallel "${command}" "${config_file}" "${timeout_sec}" "${temp_results_dir}" "${batch_size}" "${timestamp}"
         else
-            run_sequential "${command}" "${config_file}" "${timeout_sec}" "${results_dir}" "${timestamp}"
+            run_sequential "${command}" "${config_file}" "${timeout_sec}" "${temp_results_dir}" "${timestamp}"
         fi
     fi
 
-    # Display and save results
+    # Create aggregated output file in first cluster's ops directory for reference
+    local output_base_dir="${HOME}/k8s-health-check/output"
+    local first_cluster=$(echo "${cluster_list}" | head -1)
+    local output_file="${output_base_dir}/${first_cluster}/ops/ops-aggregated-${timestamp}.txt"
+
+    # Display and save aggregated results
     display_results "${results_file}" "${output_file}" "${command}" "${output_only}"
 
-    # Cleanup temp results file
-    rm -f "${results_file}"
+    # Cleanup temp results directory
+    rm -rf "${temp_results_dir}"
 
     # Run cleanup for each cluster
-    local output_base_dir="${HOME}/k8s-health-check/output"
     while IFS= read -r cluster_name; do
         [[ -z "${cluster_name}" ]] && continue
         cleanup_old_files "${output_base_dir}/${cluster_name}" "ops"
     done <<< "${cluster_list}"
 
+    echo ""
+    print_section "Results Saved"
+    echo -e "${CYAN}Per-cluster output:${NC} ${output_base_dir}/<cluster-name>/ops/"
+    echo -e "${CYAN}Aggregated output:${NC} ${output_file}"
     echo ""
     display_banner "Ops Command Complete!"
     echo ""

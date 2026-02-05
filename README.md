@@ -277,13 +277,7 @@ Executes commands across multiple clusters with parallel batch execution.
 # Single cluster
 ./k8s-ops-cmd.sh -c prod-workload-01 "kubectl get nodes"
 
-# Get node count across all clusters
-./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
-
-# Check Kubernetes version
-./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
-
-# Management cluster discovery
+# Run on all workload cluster under mentioned Management cluster by discovery
 ./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes"
 
 # Custom config and timeout
@@ -294,6 +288,12 @@ Executes commands across multiple clusters with parallel batch execution.
 
 # Custom batch size
 ./k8s-ops-cmd.sh --batch-size 10 "kubectl get nodes"
+
+# Get node count across all clusters
+./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
+
+# Check Kubernetes version
+./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
 ```
 
 ### Management Cluster Discovery (`-m` flag)

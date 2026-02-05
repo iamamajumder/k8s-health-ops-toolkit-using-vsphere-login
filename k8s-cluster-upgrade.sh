@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ################################################################################
-# Kubernetes Cluster Upgrade Script (v3.7)
+# Kubernetes Cluster Upgrade Script (v3.8)
 #
 # Simple orchestration script that delegates health checks to k8s-health-check.sh
 #
@@ -9,8 +9,13 @@
 #   - Calls k8s-health-check.sh for PRE and POST health checks
 #   - Orchestrates upgrade workflow with user confirmation
 #   - Monitors upgrade progress every 2 minutes
-#   - Dynamic timeout based on node count (nodes × 5 minutes)
+#   - Dynamic timeout based on node count (nodes × 5 minutes per node)
 #   - Supports parallel batch upgrades (--parallel flag)
+#
+# v3.8 Fixes:
+#   - Fixed POST health check skipped in parallel mode (proper logging)
+#   - Fixed version matching for VMware suffixes (v1.29.1+vmware.1)
+#   - Added real-time progress display during parallel monitoring
 #
 # Usage:
 #   ./k8s-cluster-upgrade.sh -c cluster-name          # Single cluster
@@ -23,7 +28,7 @@ set -euo pipefail
 
 # Script directory and version
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.7"
+VERSION="3.8"
 
 # Source library modules
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -390,10 +395,17 @@ monitor_upgrade_progress() {
                 jq -r '.items[].status.nodeInfo.kubeletVersion' 2>/dev/null || echo "")
 
             if [[ -n "${node_versions}" ]]; then
-                # Count nodes at new version (matching current API server version)
-                nodes_upgraded=$(echo "${node_versions}" | grep -c "${current_version}" || true)
+                # Extract base version (e.g., v1.29.1 from v1.29.1+vmware.1)
+                # This handles VMware/vendor version suffixes
+                local base_version=$(echo "${current_version}" | sed 's/+.*//' | tr -d ' \n\r')
+
+                # Count nodes at new version (matching base version to handle vendor suffixes)
+                # Use grep -F for literal matching to avoid regex issues with version strings
+                nodes_upgraded=$(echo "${node_versions}" | grep -c "${base_version}" || true)
                 nodes_upgraded=$(echo "${nodes_upgraded}" | tr -d ' \n\r')
                 nodes_upgraded=${nodes_upgraded:-0}
+
+                debug "Version check: base='${base_version}', nodes_upgraded=${nodes_upgraded}/${nodes_total}"
             else
                 # Fallback if jq fails - set to 0 to prevent false success
                 nodes_upgraded=0
@@ -782,12 +794,26 @@ monitor_and_post_upgrade() {
     local post_version=""
     local duration=0
 
-    # Monitor upgrade (output goes to log file only)
-    monitor_upgrade_progress "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}" > /dev/null 2>&1
+    # Find the upgrade log for this cluster (created by execute_upgrade)
+    local upgrade_log=$(ls -t "${output_dir}"/upgrade-log-*.txt 2>/dev/null | head -1)
+    if [[ -z "${upgrade_log}" ]]; then
+        # Create a log file if none exists
+        upgrade_log="${output_dir}/upgrade-log-parallel-$(get_timestamp).txt"
+    fi
+
+    # Monitor upgrade (output goes to upgrade log file, not /dev/null)
+    # This ensures we can debug issues while keeping terminal clean
+    monitor_upgrade_progress "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}" >> "${upgrade_log}" 2>&1
     local monitor_result=$?
 
     local end_time=$(date +%s)
     duration=$(( (end_time - start_time) / 60 ))
+
+    # Log the monitor result for debugging
+    echo "" >> "${upgrade_log}"
+    echo "=== Parallel Monitor Result ===" >> "${upgrade_log}"
+    echo "Monitor exit code: ${monitor_result}" >> "${upgrade_log}"
+    echo "Duration: ${duration} minutes" >> "${upgrade_log}"
 
     case ${monitor_result} in
         0)
@@ -795,18 +821,26 @@ monitor_and_post_upgrade() {
             if [[ -f "${output_dir}/.post-version" ]]; then
                 post_version=$(cat "${output_dir}/.post-version")
             fi
+            echo "Post version: ${post_version}" >> "${upgrade_log}"
 
-            # Run POST health check
-            run_post_health_check "${cluster_name}" "${output_dir}" > /dev/null 2>&1
+            # Run POST health check (output to log file)
+            echo "" >> "${upgrade_log}"
+            echo "=== Running POST Health Check ===" >> "${upgrade_log}"
+            run_post_health_check "${cluster_name}" "${output_dir}" >> "${upgrade_log}" 2>&1
             if [[ $? -ne 0 ]]; then
                 status="SUCCESS_POST_FAILED"
+                echo "POST health check: FAILED" >> "${upgrade_log}"
+            else
+                echo "POST health check: SUCCESS" >> "${upgrade_log}"
             fi
             ;;
         1)
             status="FAILED"
+            echo "Status: FAILED (upgrade error)" >> "${upgrade_log}"
             ;;
         2)
             status="TIMEOUT"
+            echo "Status: TIMEOUT after ${timeout_minutes} minutes" >> "${upgrade_log}"
             ;;
     esac
 
@@ -993,13 +1027,35 @@ upgrade_clusters_parallel() {
             pids["${cluster_name}"]=$!
         done
 
-        # Phase 4: Wait for batch completion
+        # Phase 4: Wait for batch completion with progress display
         progress "Waiting for batch ${batch_num} to complete..."
         echo ""
+        echo "Monitor progress (check upgrade logs for details):"
 
+        # Wait for each process and show when it completes
         for cluster_name in "${!pids[@]}"; do
-            wait ${pids[$cluster_name]} 2>/dev/null
+            local pid=${pids[$cluster_name]}
+            wait ${pid} 2>/dev/null
+            local wait_result=$?
+
+            # Check the upgrade log for final status
+            local cluster_output_dir="${HOME}/k8s-health-check/output/${cluster_name}/upgrade"
+            local status_indicator="?"
+
+            if [[ -f "${cluster_output_dir}/.post-version" ]]; then
+                status_indicator="${GREEN}✓${NC}"
+            elif [[ -f "${cluster_output_dir}/status.txt" ]]; then
+                local file_status=$(cat "${cluster_output_dir}/status.txt" 2>/dev/null)
+                case "${file_status}" in
+                    TIMEOUT) status_indicator="${YELLOW}T${NC}" ;;
+                    FAILED) status_indicator="${RED}✗${NC}" ;;
+                    *) status_indicator="." ;;
+                esac
+            fi
+
+            echo -e "  [${status_indicator}] ${cluster_name} monitoring complete"
         done
+        echo ""
 
         # Phase 5: Parse results and display batch summary
         while IFS= read -r line; do

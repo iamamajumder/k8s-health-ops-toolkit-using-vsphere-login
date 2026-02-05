@@ -769,9 +769,6 @@ run_health_checks() {
 
         # POST mode: Display comparison reports for each cluster
         if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
-            echo ""
-            print_section "PRE vs POST Comparison"
-
             local comparison_found=false
             for cluster_name in "${PARALLEL_PROCESSED_CLUSTERS[@]}"; do
                 # Find latest comparison file in new structure
@@ -781,9 +778,6 @@ run_health_checks() {
                 if [[ -f "${comparison_file}" ]] && [[ -s "${comparison_file}" ]]; then
                     echo ""
                     cat "${comparison_file}"
-                    echo ""
-                    echo "================================================================================"
-                    echo ""
                     comparison_found=true
                 else
                     # Debug: show why comparison isn't displayed
