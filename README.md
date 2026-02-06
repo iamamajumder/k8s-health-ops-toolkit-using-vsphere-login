@@ -194,79 +194,186 @@ Executes commands across multiple clusters with parallel batch execution.
 
 ### Script Architecture
 
-```mermaid
-graph TB
-    subgraph SCRIPTS["🎯 Main Scripts"]
-        HC["📊 k8s-health-check.sh<br/>(PRE/POST validation)"]
-        CU["⬆️ k8s-cluster-upgrade.sh<br/>(Orchestration)"]
-        OC["🔧 k8s-ops-cmd.sh<br/>(Multi-cluster ops)"]
-    end
+<table>
+<tr>
+<td colspan="3" align="center">
 
-    subgraph LIB["📦 Library Modules"]
-        L1["🔧 common.sh<br/>(Utilities)"]
-        L2["⚙️ config.sh<br/>(Config parsing)"]
-        L3["🔐 tmc-context.sh<br/>(TMC contexts)"]
-        L4["☁️ tmc.sh<br/>(TMC integration)"]
-        L5["❤️ health.sh<br/>(Health metrics)"]
-        L6["📈 comparison.sh<br/>(PRE/POST)"]
-    end
+**🎯 MAIN SCRIPTS**
 
-    subgraph SECTIONS["📋 Health Checks"]
-        S["18 sections/<br/>Comprehensive audit"]
-    end
+</td>
+</tr>
+<tr>
+<td align="center">
 
-    subgraph EXT["🌐 External Tools"]
-        E1["tanzu CLI"]
-        E2["kubectl"]
-        E3["jq"]
-    end
+**📊 k8s-health-check.sh**<br/>
+PRE/POST validation<br/>
+18 health modules<br/>
+Comparison reports
 
-    HC --> L1 & L2 & L3 & L4 & L5 & L6
-    HC --> S
-    CU --> L1 & L2 & L3 & L4
-    CU -.->|delegates| HC
-    OC --> L1 & L2 & L3 & L4
-    L4 --> E1 & E2 & E3
+</td>
+<td align="center">
 
-    style HC fill:#e1f5ff
-    style CU fill:#fff3e0
-    style OC fill:#f3e5f5
-    style S fill:#e8f5e9
-    style EXT fill:#fce4ec
-```
+**⬆️ k8s-cluster-upgrade.sh**<br/>
+Upgrade orchestration<br/>
+Health gates<br/>
+Progress monitoring
+
+</td>
+<td align="center">
+
+**🔧 k8s-ops-cmd.sh**<br/>
+Multi-cluster ops<br/>
+Parallel execution<br/>
+TMC discovery
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+⬇️ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⬇️ *delegates* &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⬇️
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+**📦 LIBRARY MODULES** (`lib/`)
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+`common.sh` - Utilities<br/>
+`config.sh` - Config parsing
+
+</td>
+<td align="center">
+
+`tmc-context.sh` - TMC contexts<br/>
+`tmc.sh` - TMC integration
+
+</td>
+<td align="center">
+
+`health.sh` - Health metrics<br/>
+`comparison.sh` - PRE/POST
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+⬇️
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+**📋 18 HEALTH CHECK SECTIONS** (`lib/sections/`)
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+⬇️
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+**🌐 EXTERNAL TOOLS**: `tanzu CLI` · `kubectl` · `jq`
+
+</td>
+</tr>
+</table>
 
 ---
 
 ### Health Status Decision Tree
 
-```mermaid
-flowchart TD
-    Start["🔍 Collect Metrics"] --> Check1{"⚠️ Nodes<br/>NotReady?"}
-
-    Check1 -->|Yes| CRIT["🔴 CRITICAL<br/>Immediate action required"]
-    Check1 -->|No| Check2{"💥 Pods<br/>CrashLoopBackOff?"}
-
-    Check2 -->|Yes| CRIT
-    Check2 -->|No| Check3{"⏳ Pending/NotReady/<br/>Unaccounted?"}
-
-    Check3 -->|Yes| WARN["🟡 WARNINGS<br/>Monitor and investigate"]
-    Check3 -->|No| HEALTHY["🟢 HEALTHY<br/>All systems nominal"]
-
-    CRIT --> Action1["❌ Abort upgrade<br/>Investigate issues"]
-    WARN --> Action2["⚠️ Prompt user<br/>Proceed with caution"]
-    HEALTHY --> Action3["✅ Auto-proceed<br/>Safe to upgrade"]
-
-    style Start fill:#e3f2fd
-    style Check1 fill:#fff3e0
-    style Check2 fill:#fff3e0
-    style Check3 fill:#fff3e0
-    style CRIT fill:#ffebee
-    style WARN fill:#fff8e1
-    style HEALTHY fill:#e8f5e9
-    style Action1 fill:#ffcdd2
-    style Action2 fill:#ffe0b2
-    style Action3 fill:#c8e6c9
 ```
+                              ┌─────────────────────┐
+                              │   🔍 COLLECT        │
+                              │      METRICS        │
+                              └──────────┬──────────┘
+                                         │
+                              ┌──────────▼──────────┐
+                              │  Nodes NotReady?    │
+                              └──────────┬──────────┘
+                                         │
+                    ┌────────────────────┼────────────────────┐
+                    │ YES                │                    │ NO
+                    ▼                    │                    ▼
+        ┌───────────────────┐            │         ┌──────────────────────┐
+        │   🔴 CRITICAL     │            │         │ Pods CrashLoopBackOff│
+        │   ───────────     │            │         └──────────┬───────────┘
+        │ • Abort upgrade   │            │                    │
+        │ • Investigate     │◄───────────┘         ┌──────────┼──────────┐
+        │ • Alert team      │            YES       │                     │ NO
+        └───────────────────┘            ┌─────────┘                     ▼
+                                         │              ┌─────────────────────────┐
+                                         │              │ Pending/NotReady/       │
+                                         │              │ Unaccounted Pods?       │
+                                         │              └──────────┬──────────────┘
+                                         │                         │
+                                         │              ┌──────────┼──────────┐
+                                         │              │ YES                 │ NO
+                                         │              ▼                     ▼
+                                         │   ┌───────────────────┐  ┌───────────────────┐
+                                         │   │   🟡 WARNINGS     │  │   🟢 HEALTHY      │
+                                         │   │   ──────────      │  │   ─────────       │
+                                         │   │ • Prompt user     │  │ • Auto-proceed    │
+                                         │   │ • Monitor         │  │ • Safe to upgrade │
+                                         │   │ • Proceed w/      │  │ • All nominal     │
+                                         │   │   caution         │  │                   │
+                                         │   └───────────────────┘  └───────────────────┘
+                                         │
+                                         └─────────────────────────────────────────────────
+```
+
+<table>
+<tr>
+<th>🔴 CRITICAL</th>
+<th>🟡 WARNINGS</th>
+<th>🟢 HEALTHY</th>
+</tr>
+<tr>
+<td>
+
+**Criteria:**
+- Nodes NotReady > 0
+- Pods CrashLoop > 0
+
+**Action:** ❌ Abort
+
+</td>
+<td>
+
+**Criteria:**
+- Pods Pending > 0
+- Pods Unaccounted > 0
+- Workloads NotReady > 0
+- PVCs NotBound > 0
+- Helm Failed > 0
+
+**Action:** ⚠️ Prompt User
+
+</td>
+<td>
+
+**Criteria:**
+- None of the above
+
+**Action:** ✅ Auto-proceed
+
+</td>
+</tr>
+</table>
 
 ### Library Modules
 
