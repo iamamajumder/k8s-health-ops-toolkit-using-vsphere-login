@@ -4,6 +4,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| [v4.0](#version-40-2026-02-06) | 2026-02-06 | Documentation overhaul - README-DEV.md beautification |
 | [v3.8](#version-38-2026-02-05) | 2026-02-05 | Codebase refactoring (~455 lines removed) |
 | [v3.7](#version-37-2026-02-05) | 2026-02-05 | Parallel upgrades, `-c` flag for health-check/ops-cmd |
 | [v3.6](#version-36-2026-02-04) | 2026-02-04 | Per-cluster output structure, automatic cleanup |
@@ -14,6 +15,43 @@
 | [v3.2](#version-32-2026-01-28) | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |
 | [v3.1](#version-31-2025-01-22) | 2025-01-22 | Auto-discovery, auto-context, unified execution |
 | [v3.0](#version-30-initial-release) | Initial | Basic health check functionality |
+
+---
+
+## Version 4.0 (2026-02-06)
+
+**Summary:** Documentation overhaul - README-DEV.md converted from plain text to proper markdown for improved VSCode readability.
+
+### Changes
+
+#### README-DEV.md Beautification
+- Converted ASCII box headers (`================`) to proper markdown `##` headers
+- Converted ASCII tables (`+---+---+`) to markdown tables (`| --- |`)
+- Wrapped all command examples in ```bash code blocks with syntax highlighting
+- Wrapped ASCII diagrams in code blocks to preserve alignment
+- Added `---` horizontal rules between major sections
+- Added clickable Table of Contents with anchor links
+- Removed excessive 2-space indentation throughout
+
+#### Architecture Section Simplification
+- Replaced complex ASCII box diagrams with simple tree format using `|` and `+--`
+- Upgrade Workflow: Now shows linear flow with bullet points
+- Script Architecture: Tree structure (main scripts → library modules → sections → external tools)
+- Health Status Decision Tree: Simple decision tree with `+-- YES/NO` branches
+
+#### "The Three Scripts" Section Enhancement
+- Added three numbered subsections (2.1, 2.2, 2.3) with proper headers
+- Included full descriptions for each script
+- Added comprehensive code examples from README.md:
+  - Health Check: 4 examples
+  - Cluster Upgrade: 5 examples
+  - Multi-Cluster Ops: 4 examples
+- Added options tables for each script
+- Included Health Status Classification table
+
+### Breaking Changes
+
+**None** - Documentation only, no code changes.
 
 ---
 
