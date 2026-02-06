@@ -217,12 +217,44 @@ All three run in parallel with their own timeouts. Cluster A could complete/time
 **Files Modified:**
 - `k8s-health-check.sh` - Removed redundant `print_section()` and extra separators
 
+#### 4.7 k8s-ops-cmd.sh: Optimized Output File Structure
+
+**Issue**: Multiple redundant output files per cluster created disk clutter:
+- `ops-output-YYYYMMDD_HHMMSS.txt` (formatted output)
+- `ops-raw-YYYYMMDD_HHMMSS.txt` (raw output - duplicated content)
+- `ops-aggregated-YYYYMMDD_HHMMSS.txt` (mixed with per-cluster files)
+
+**Root Cause**: Original design kept both formatted and raw versions of same output; aggregated results stored in per-cluster directories.
+
+**Solution**:
+- **Consolidated per-cluster output**: Merged `ops-output` and `ops-raw` into single `ops-YYYYMMDD_HHMMSS.txt` file per cluster
+- **New aggregated directory**: Created dedicated `/k8s-health-check/output/ops-aggregated/` directory for multi-cluster results
+- **Cleaner structure**:
+  ```
+  ~/k8s-health-check/output/
+  ├── cluster-1/ops/ops-YYYYMMDD_HHMMSS.txt          (single file per cluster)
+  ├── cluster-2/ops/ops-YYYYMMDD_HHMMSS.txt
+  └── ops-aggregated/ops-YYYYMMDD_HHMMSS.txt         (aggregated results)
+  ```
+- **Automatic cleanup**: Keeps 5 most recent aggregated files
+
+**Benefits**:
+- 50% reduction in per-cluster files (2 files → 1 file)
+- Cleaner directory structure
+- Aggregated results separated from per-cluster results
+- Easier to locate results and manage disk space
+
+**Files Modified:**
+- `k8s-ops-cmd.sh` - Consolidated output files, new aggregated directory, cleanup logic
+
 ### Summary of Changes
 
 | Component | Issue | Fix | Version Impact |
 |-----------|-------|-----|-----------------|
 | k8s-ops-cmd.sh | Credentials not prompted (-c flag) | Sequential context prep before parallel | 3.5 → 3.8 |
 | k8s-ops-cmd.sh | Old output directory structure | Per-cluster v3.8 structure | 3.5 → 3.8 |
+| k8s-ops-cmd.sh | Redundant output files (ops-output + ops-raw) | Consolidated to single ops-*.txt per cluster | 3.8 |
+| k8s-ops-cmd.sh | Aggregated results in per-cluster dirs | New /ops-aggregated/ directory | 3.8 |
 | k8s-cluster-upgrade.sh | POST skipped in parallel mode | File logging instead of /dev/null | 3.7 → 3.8 |
 | k8s-cluster-upgrade.sh | VMware version suffix mismatch | Base version extraction | 3.7 → 3.8 |
 | k8s-health-check.sh | Redundant header in POST output | Remove wrapper section | 3.8 |

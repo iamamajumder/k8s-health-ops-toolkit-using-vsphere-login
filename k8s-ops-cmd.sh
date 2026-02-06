@@ -182,8 +182,7 @@ execute_on_cluster() {
         fi
     fi
 
-    # Write to both raw results file (for aggregated display) AND per-cluster file
-    # Raw results for aggregated display
+    # Write to aggregated raw results file for result parsing
     {
         echo "CLUSTER: ${cluster_name}"
         echo "STATUS: ${status}"
@@ -193,11 +192,11 @@ execute_on_cluster() {
         echo "---END---"
     } >> "${raw_output_file}"
 
-    # Per-cluster ops directory
+    # Per-cluster ops directory (single output file per cluster)
     local cluster_ops_dir="${output_base_dir}/${cluster_name}/ops"
     mkdir -p "${cluster_ops_dir}"
 
-    # Save to per-cluster timestamped files
+    # Save single per-cluster output file with formatted output
     {
         echo "==================================="
         echo "Ops Command Execution"
@@ -210,10 +209,7 @@ execute_on_cluster() {
         echo "==================================="
         echo ""
         echo "${output}"
-    } > "${cluster_ops_dir}/ops-output-${timestamp}.txt"
-
-    # Also save raw output
-    echo "${output}" > "${cluster_ops_dir}/ops-raw-${timestamp}.txt"
+    } > "${cluster_ops_dir}/ops-${timestamp}.txt"
 
     return ${exit_code}
 }
@@ -657,10 +653,11 @@ run_ops_command() {
         fi
     fi
 
-    # Create aggregated output file in first cluster's ops directory for reference
+    # Create aggregated output in dedicated ops-aggregated directory
     local output_base_dir="${HOME}/k8s-health-check/output"
-    local first_cluster=$(echo "${cluster_list}" | head -1)
-    local output_file="${output_base_dir}/${first_cluster}/ops/ops-aggregated-${timestamp}.txt"
+    local aggregated_dir="${output_base_dir}/ops-aggregated"
+    mkdir -p "${aggregated_dir}"
+    local output_file="${aggregated_dir}/ops-${timestamp}.txt"
 
     # Display and save aggregated results
     display_results "${results_file}" "${output_file}" "${command}" "${output_only}"
@@ -674,10 +671,22 @@ run_ops_command() {
         cleanup_old_files "${output_base_dir}/${cluster_name}" "ops"
     done <<< "${cluster_list}"
 
+    # Cleanup aggregated directory (keep 5 most recent)
+    if [[ -d "${aggregated_dir}" ]]; then
+        local agg_files=($(ls -t "${aggregated_dir}"/ops-*.txt 2>/dev/null))
+        local agg_count=${#agg_files[@]}
+        if [[ ${agg_count} -gt 5 ]]; then
+            for ((i=5; i<agg_count; i++)); do
+                debug "Removing old aggregated file: $(basename "${agg_files[$i]}")"
+                rm -f "${agg_files[$i]}"
+            done
+        fi
+    fi
+
     echo ""
     print_section "Results Saved"
-    echo -e "${CYAN}Per-cluster output:${NC} ${output_base_dir}/<cluster-name>/ops/"
-    echo -e "${CYAN}Aggregated output:${NC} ${output_file}"
+    echo -e "${CYAN}Per-cluster output:${NC} ${output_base_dir}/<cluster-name>/ops/ops-YYYYMMDD_HHMMSS.txt"
+    echo -e "${CYAN}Aggregated output:${NC} ${aggregated_dir}/ops-${timestamp}.txt"
     echo ""
     display_banner "Ops Command Complete!"
     echo ""
