@@ -242,150 +242,63 @@ Executes commands across multiple clusters with parallel batch execution.
 
 ### Health Status Decision Tree
 
-<table>
-<tr>
-<td colspan="3" align="center">
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 🔍 COLLECT METRICS                                       │
+│                                                                                         │
+│                    Nodes, Pods, Workloads, Storage, Helm Releases                       │
+└─────────────────────────────────────────┬───────────────────────────────────────────────┘
+                                          │
+                                          ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              ❓ Nodes NotReady > 0?                                      │
+└───────────────┬─────────────────────────────────────────────────────────┬───────────────┘
+                │                                                         │
+                │ YES                                                     │ NO
+                ▼                                                         ▼
+┌───────────────────────────────┐                     ┌───────────────────────────────────┐
+│        🔴 CRITICAL            │                     │    ❓ Pods CrashLoopBackOff > 0?  │
+│        ───────────            │                     └─────────────────┬─────────────────┘
+│                               │                                       │
+│  • Abort upgrade              │◄──────────── YES ─────────────────────┤
+│  • Investigate immediately    │                                       │ NO
+│  • Alert team                 │                                       ▼
+│                               │                     ┌───────────────────────────────────┐
+└───────────────────────────────┘                     │  ❓ Pending/NotReady/Unaccounted? │
+                                                      └─────────────────┬─────────────────┘
+                                                                        │
+                                          ┌─────────────────────────────┼─────────────────┐
+                                          │ YES                                           │ NO
+                                          ▼                                               ▼
+                          ┌───────────────────────────────┐       ┌───────────────────────────────┐
+                          │        🟡 WARNINGS            │       │        🟢 HEALTHY             │
+                          │        ───────────            │       │        ─────────              │
+                          │                               │       │                               │
+                          │  • Prompt user for decision   │       │  • Auto-proceed with upgrade  │
+                          │  • Monitor closely            │       │  • All systems nominal        │
+                          │  • Proceed with caution       │       │  • Safe to continue           │
+                          │                               │       │                               │
+                          └───────────────────────────────┘       └───────────────────────────────┘
+```
 
-**🔍 COLLECT METRICS**
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-⬇️
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-**❓ Nodes NotReady?**
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-⬇️ **YES**
-
-</td>
-<td align="center">
-
-</td>
-<td align="center">
-
-⬇️ **NO**
-
-</td>
-</tr>
-<tr>
-<td align="center" rowspan="3">
-
-**🔴 CRITICAL**<br/>
-───────────<br/>
-• Abort upgrade<br/>
-• Investigate<br/>
-• Alert team
-
-</td>
-<td align="center">
-
-</td>
-<td align="center">
-
-**❓ Pods CrashLoopBackOff?**
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-⬅️ **YES**
-
-</td>
-<td align="center">
-
-⬇️ **NO**
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-</td>
-<td align="center">
-
-**❓ Pending/NotReady/Unaccounted?**
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-</td>
-<td align="center">
-
-⬇️ **YES** &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⬇️ **NO**
-
-</td>
-<td align="center">
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-</td>
-<td align="center">
-
-**🟡 WARNINGS** &nbsp;&nbsp;&nbsp;&nbsp; **🟢 HEALTHY**
-
-</td>
-<td align="center">
-
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<th>🔴 CRITICAL</th>
-<th>🟡 WARNINGS</th>
-<th>🟢 HEALTHY</th>
-</tr>
-<tr>
-<td>
-
-**Criteria:**
-- Nodes NotReady > 0
-- Pods CrashLoop > 0
-
-**Action:** ❌ Abort
-
-</td>
-<td>
-
-**Criteria:**
-- Pods Pending > 0
-- Pods Unaccounted > 0
-- Workloads NotReady > 0
-- PVCs NotBound > 0
-- Helm Failed > 0
-
-**Action:** ⚠️ Prompt User
-
-</td>
-<td>
-
-**Criteria:**
-- None of the above
-
-**Action:** ✅ Auto-proceed
-
-</td>
-</tr>
-</table>
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   HEALTH STATUS SUMMARY                                  │
+├─────────────────────────────┬─────────────────────────────┬─────────────────────────────┤
+│        🔴 CRITICAL          │        🟡 WARNINGS          │        🟢 HEALTHY           │
+├─────────────────────────────┼─────────────────────────────┼─────────────────────────────┤
+│                             │                             │                             │
+│  Criteria:                  │  Criteria:                  │  Criteria:                  │
+│  • Nodes NotReady > 0       │  • Pods Pending > 0         │  • None of the above        │
+│  • Pods CrashLoop > 0       │  • Pods Unaccounted > 0     │                             │
+│                             │  • Workloads NotReady > 0   │                             │
+│                             │  • PVCs NotBound > 0        │                             │
+│                             │  • Helm Failed > 0          │                             │
+│                             │                             │                             │
+│  Action: ❌ Abort           │  Action: ⚠️ Prompt User     │  Action: ✅ Auto-proceed    │
+│                             │                             │                             │
+└─────────────────────────────┴─────────────────────────────┴─────────────────────────────┘
+```
 
 ### Library Modules
 
