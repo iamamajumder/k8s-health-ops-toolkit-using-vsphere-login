@@ -4,7 +4,7 @@
 
 **Health Check, Upgrade & Multi-Cluster Operations for VMware Tanzu**
 
-[![VCF Support](https://img.shields.io/badge/VKS 3.3.3-blue?style=flat-square)]()
+[![VMware Kubernetes Service](https://img.shields.io/badge/VKS-3.3.3-blue?style=flat-square)]()
 [![Kubernetes](https://img.shields.io/badge/K8s-1.28--1.32-326CE5?style=flat-square&logo=kubernetes&logoColor=white)]()
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Bash](https://img.shields.io/badge/Bash-4.0%2B-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)]()
