@@ -10,6 +10,9 @@ VKS 3.3.3 | Kubernetes 1.28-1.32 | Bash 4.0+ | TMC Self-Managed
 
 1. [Quick Start](#1-quick-start)
 2. [The Three Scripts](#2-the-three-scripts)
+   - [Health Check](#21-health-check-k8s-health-checksh)
+   - [Cluster Upgrade](#22-cluster-upgrade-k8s-cluster-upgradesh)
+   - [Multi-Cluster Operations](#23-multi-cluster-operations-k8s-ops-cmdsh)
 3. [Architecture](#3-architecture)
    - [Upgrade Workflow](#upgrade-workflow)
    - [Script Architecture](#script-architecture)
@@ -50,26 +53,101 @@ chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
 | `k8s-cluster-upgrade.sh` | Orchestrated upgrades with health gates |
 | `k8s-ops-cmd.sh` | Execute commands across multiple clusters |
 
-**Health Check:**
+---
+
+### 2.1 Health Check (`k8s-health-check.sh`)
+
+Captures comprehensive cluster state before and after changes. Runs 18 health check modules and produces reports with **HEALTHY** / **WARNINGS** / **CRITICAL** status.
+
 ```bash
-./k8s-health-check.sh --mode pre                    # PRE baseline
-./k8s-health-check.sh --mode pre -c <cluster>       # Single cluster
-./k8s-health-check.sh --mode post                   # POST with comparison
+# PRE-change baseline (parallel, 6 clusters at a time)
+./k8s-health-check.sh --mode pre
+
+# Single cluster health check
+./k8s-health-check.sh --mode pre -c prod-workload-01
+
+# POST-change with comparison to latest PRE
+./k8s-health-check.sh --mode post
+
+# POST with specific PRE results directory
+./k8s-health-check.sh --mode post ./clusters.conf ./health-check-results/pre-20260128_120000
 ```
 
-**Cluster Upgrade:**
+| Option | Description |
+|--------|-------------|
+| `--mode pre\|post` | Check mode (required) |
+| `-c, --cluster NAME` | Single cluster (no clusters.conf needed) |
+| `--sequential` | One cluster at a time (default: parallel) |
+| `--batch-size N` | Clusters per parallel batch (default: 6) |
+| `--cache-status` | Show cache status |
+| `--clear-cache` | Clear all cached data |
+
+**Health Status Classification:**
+
+| Status | Criteria |
+|--------|----------|
+| **CRITICAL** | Nodes NotReady > 0 OR Pods CrashLoopBackOff > 0 |
+| **WARNINGS** | Pods Pending > 0, Unaccounted > 0, Deployments/DaemonSets/StatefulSets NotReady > 0, PVCs NotBound > 0, Helm Failed > 0 |
+| **HEALTHY** | None of the above |
+
+---
+
+### 2.2 Cluster Upgrade (`k8s-cluster-upgrade.sh`)
+
+Orchestrates cluster upgrades with PRE/POST health checks and progress monitoring.
+
 ```bash
-./k8s-cluster-upgrade.sh                            # Sequential upgrade
-./k8s-cluster-upgrade.sh -c <cluster>               # Single cluster
-./k8s-cluster-upgrade.sh --parallel                 # Parallel batch
+# Default: Use ./clusters.conf (sequential)
+./k8s-cluster-upgrade.sh
+
+# Single cluster upgrade
+./k8s-cluster-upgrade.sh -c prod-workload-01
+
+# Parallel batch upgrades (6 at a time)
+./k8s-cluster-upgrade.sh --parallel
+
+# Parallel with custom batch size
+./k8s-cluster-upgrade.sh --parallel --batch-size 3
+
+# Dry run
+./k8s-cluster-upgrade.sh -c prod-workload-01 --dry-run
 ```
 
-**Multi-Cluster Ops:**
+| Option | Description |
+|--------|-------------|
+| `-c CLUSTER` | Upgrade a single cluster |
+| `--parallel` | Run upgrades in parallel batches |
+| `--batch-size N` | Clusters per batch in parallel mode (default: 6) |
+| `--timeout-multiplier N` | Minutes per node for timeout (default: 5) |
+| `--dry-run` | Show what would be done without executing |
+
+---
+
+### 2.3 Multi-Cluster Operations (`k8s-ops-cmd.sh`)
+
+Executes commands across multiple clusters with parallel batch execution.
+
 ```bash
-./k8s-ops-cmd.sh "kubectl get nodes"                # All clusters
-./k8s-ops-cmd.sh -c <cluster> "kubectl get nodes"   # Single cluster
-./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes"      # TMC discovery
+# Single cluster
+./k8s-ops-cmd.sh -c prod-workload-01 "kubectl get nodes"
+
+# All clusters from config
+./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
+
+# Discovery from TMC management cluster
+./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes"
+
+# Check Kubernetes version across clusters
+./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
 ```
+
+| Option | Description |
+|--------|-------------|
+| `-c, --cluster NAME` | Run on a single cluster |
+| `-m, --management-cluster ENV` | Discover clusters from TMC management cluster |
+| `--timeout SEC` | Command timeout in seconds (default: 30) |
+| `--sequential` | One cluster at a time (default: parallel) |
+| `--batch-size N` | Clusters per batch (default: 6) |
 
 ---
 
@@ -78,153 +156,87 @@ chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
 ### Upgrade Workflow
 
 ```
-    +-----------------+     +------------------+     +------------------+
-    |   PRE-Change    |     |  Change Window   |     |   POST-Change    |
-    +-----------------+     +------------------+     +------------------+
-    |                 |     |                  |     |                  |
-    | +-------------+ |     | +--------------+ |     | +--------------+ |
-    | | Run PRE     | |     | |   Execute    | |     | | Run POST     | |
-    | | Health Check|------->|   Upgrade    |------->| | Health Check | |
-    | +-------------+ |     | +--------------+ |     | +--------------+ |
-    |       |         |     |                  |     |       |          |
-    |       v         |     |                  |     |       v          |
-    | +-------------+ |     |                  |     | +--------------+ |
-    | |  Generate   | |     |                  |     | | Compare with | |
-    | |  Baseline   | |     |                  |     | |     PRE      | |
-    | +-------------+ |     |                  |     | +--------------+ |
-    |                 |     |                  |     |       |          |
-    +-----------------+     +------------------+     +-------+----------+
-                                                           |
-                                                           v
-                                                   +---------------+
-                                                   |    Verdict    |
-                                                   +-------+-------+
-                                                           |
-                           +-------------------------------+-------------------------------+
-                           |                               |                               |
-                           v                               v                               v
-                   +---------------+               +---------------+               +---------------+
-                   |    PASSED     |               |   WARNINGS    |               |    FAILED     |
-                   |   (Success)   |               |   (Review)    |               | (Investigate) |
-                   +---------------+               +---------------+               +---------------+
+PRE-Change                 Change Window              POST-Change
+|                          |                          |
++-- Run PRE Health Check   +-- Execute Upgrade        +-- Run POST Health Check
+|   |                      |   |                      |   |
+|   +-- 18 health modules  |   +-- Monitor progress   |   +-- 18 health modules
+|   +-- Generate baseline  |   +-- Node-by-node       |   +-- Compare with PRE
+|                          |       version check      |
++-- Save metrics           +-- Wait for completion    +-- Generate verdict
+                                                      |
+                                                      +-- PASSED (Success)
+                                                      +-- WARNINGS (Review)
+                                                      +-- FAILED (Investigate)
 ```
 
 ### Script Architecture
 
 ```
-    +===========================================================================+
-    |                            MAIN SCRIPTS                                    |
-    +===========================================================================+
-    |                                                                            |
-    |   +------------------------+  +------------------------+  +-------------+  |
-    |   | k8s-health-check.sh    |  | k8s-cluster-upgrade.sh |  | k8s-ops-    |  |
-    |   |------------------------|  |------------------------|  | cmd.sh      |  |
-    |   | - PRE/POST validation  |  | - Orchestration        |  |-------------|  |
-    |   | - 18 health modules    |  | - Health gates         |  | - Parallel  |  |
-    |   | - Comparison reports   |  | - Progress monitoring  |  | - Any cmd   |  |
-    |   +------------------------+  +------------------------+  +-------------+  |
-    |            |                            |                       |          |
-    +============|============================|=======================|==========+
-                 |                            |                       |
-                 |      +---------delegates---+                       |
-                 |      |                                             |
-                 v      v                                             v
-    +===========================================================================+
-    |                          LIBRARY MODULES (lib/)                            |
-    +===========================================================================+
-    |                                                                            |
-    |   +---------------+  +---------------+  +---------------+                  |
-    |   | common.sh     |  | config.sh     |  | tmc-context.sh|                  |
-    |   |---------------|  |---------------|  |---------------|                  |
-    |   | Logging       |  | Config parse  |  | TMC context   |                  |
-    |   | Colors        |  | Cluster list  |  | Auto-create   |                  |
-    |   | Utilities     |  | Validation    |  | Caching       |                  |
-    |   +---------------+  +---------------+  +---------------+                  |
-    |                                                                            |
-    |   +---------------+  +---------------+  +---------------+                  |
-    |   | tmc.sh        |  | health.sh     |  | comparison.sh |                  |
-    |   |---------------|  |---------------|  |---------------|                  |
-    |   | TMC API       |  | Metrics       |  | PRE/POST      |                  |
-    |   | Metadata      |  | Status calc   |  | Delta calc    |                  |
-    |   | Kubeconfig    |  | Health check  |  | Reports       |                  |
-    |   +---------------+  +---------------+  +---------------+                  |
-    |                                                                            |
-    +===========================================================================+
-                 |
-                 v
-    +===========================================================================+
-    |                     HEALTH CHECK SECTIONS (lib/sections/)                  |
-    +===========================================================================+
-    |                                                                            |
-    |   01-cluster-overview    07-antrea-cni        13-resource-quotas           |
-    |   02-node-status         08-tanzu-vmware      14-events                    |
-    |   03-pod-status          09-security-rbac     15-connectivity              |
-    |   04-workload-status     10-component-status  16-images-audit              |
-    |   05-storage-status      11-helm-releases     17-certificates              |
-    |   06-networking          12-namespaces        18-cluster-summary           |
-    |                                                                            |
-    +===========================================================================+
-                 |
-                 v
-    +===========================================================================+
-    |                          EXTERNAL TOOLS                                    |
-    +===========================================================================+
-    |   tanzu CLI (TMC)    |    kubectl    |    jq                               |
-    +===========================================================================+
+MAIN SCRIPTS
+|
++-- k8s-health-check.sh
+|   +-- PRE/POST validation
+|   +-- 18 health modules
+|   +-- Comparison reports
+|
++-- k8s-cluster-upgrade.sh
+|   +-- Upgrade orchestration
+|   +-- Health gates (delegates to health-check.sh)
+|   +-- Progress monitoring
+|
++-- k8s-ops-cmd.sh
+    +-- Multi-cluster ops
+    +-- Parallel execution
+    +-- TMC discovery
+
+LIBRARY MODULES (lib/)
+|
++-- common.sh         Logging, colors, utilities
++-- config.sh         Config parsing, cluster list validation
++-- tmc-context.sh    TMC context auto-creation, caching
++-- tmc.sh            TMC API, metadata discovery, kubeconfig
++-- health.sh         Metrics collection, status calculation
++-- comparison.sh     PRE/POST delta calculation, reports
+
+HEALTH CHECK SECTIONS (lib/sections/)
+|
++-- 01-cluster-overview    07-antrea-cni        13-resource-quotas
++-- 02-node-status         08-tanzu-vmware      14-events
++-- 03-pod-status          09-security-rbac     15-connectivity
++-- 04-workload-status     10-component-status  16-images-audit
++-- 05-storage-status      11-helm-releases     17-certificates
++-- 06-networking          12-namespaces        18-cluster-summary
+
+EXTERNAL TOOLS
+|
++-- tanzu CLI (TMC)
++-- kubectl
++-- jq
 ```
 
 ### Health Status Decision Tree
 
 ```
-                            +-------------------+
-                            |  Collect Metrics  |
-                            |                   |
-                            | - Nodes status    |
-                            | - Pods status     |
-                            | - Workloads       |
-                            | - Storage         |
-                            +--------+----------+
-                                     |
-                                     v
-                         +-----------+-----------+
-                         |   Nodes NotReady?     |
-                         +-----------+-----------+
-                                     |
-                    +----------------+----------------+
-                    |                                 |
-                    v                                 v
-                  [YES]                             [NO]
-                    |                                 |
-                    v                                 v
-          +-----------------+             +-----------+-----------+
-          |    CRITICAL     |             | Pods CrashLoopBackOff?|
-          |-----------------|             +-----------+-----------+
-          | - Abort upgrade |                         |
-          | - Investigate   |            +------------+------------+
-          | - Alert team    |            |                         |
-          +-----------------+            v                         v
-                                       [YES]                     [NO]
-                                         |                         |
-                                         v                         v
-                               +-----------------+     +-----------+-----------+
-                               |    CRITICAL     |     | Pending/NotReady/     |
-                               +-----------------+     | Unaccounted Pods?     |
-                                                       +-----------+-----------+
-                                                                   |
-                                                      +------------+------------+
-                                                      |                         |
-                                                      v                         v
-                                                    [YES]                     [NO]
-                                                      |                         |
-                                                      v                         v
-                                            +-----------------+       +-----------------+
-                                            |    WARNINGS     |       |     HEALTHY     |
-                                            |-----------------|       |-----------------|
-                                            | - Prompt user   |       | - Auto-proceed  |
-                                            | - Monitor       |       | - Safe to       |
-                                            | - Proceed w/    |       |   upgrade       |
-                                            |   caution       |       +-----------------+
-                                            +-----------------+
+Collect Metrics (Nodes, Pods, Workloads, Storage, Helm)
+|
++-- Nodes NotReady > 0?
+    |
+    +-- YES --> CRITICAL (Abort, investigate, alert team)
+    |
+    +-- NO
+        |
+        +-- Pods CrashLoopBackOff > 0?
+            |
+            +-- YES --> CRITICAL (Abort, investigate, alert team)
+            |
+            +-- NO
+                |
+                +-- Pending/NotReady/Unaccounted > 0?
+                    |
+                    +-- YES --> WARNINGS (Prompt user, proceed with caution)
+                    |
+                    +-- NO --> HEALTHY (Auto-proceed, safe to upgrade)
 ```
 
 **Health Status Summary:**
