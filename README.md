@@ -182,62 +182,90 @@ Executes commands across multiple clusters with parallel batch execution.
 
 ### Upgrade Workflow
 
-```mermaid
-flowchart LR
-    subgraph PRE["PRE-Change"]
-        A[Run PRE Health Check] --> B[Generate Baseline]
-    end
-    subgraph CHANGE["Change Window"]
-        C[Execute Upgrade]
-    end
-    subgraph POST["POST-Change"]
-        D[Run POST Check] --> E[Compare with PRE]
-        E --> F{Verdict}
-        F -->|PASSED| G[Success]
-        F -->|WARNINGS| H[Review]
-        F -->|FAILED| I[Investigate]
-    end
-    B --> C --> D
-```
+![Upgrade Workflow](gif/upgrade_workflow.gif)
+
+**Workflow Steps:**
+1. **PRE-Change**: Run comprehensive health check and generate baseline metrics
+2. **Change Window**: Execute cluster upgrade with monitoring
+3. **POST-Change**: Run health check and compare with PRE baseline
+4. **Verdict**: Automatic classification (PASSED ✓ / WARNINGS ⚠ / FAILED ✗)
+
+---
 
 ### Script Architecture
 
 ```mermaid
 graph TB
-    subgraph SCRIPTS["Main Scripts"]
-        HC[k8s-health-check.sh]
-        CU[k8s-cluster-upgrade.sh]
-        OC[k8s-ops-cmd.sh]
+    subgraph SCRIPTS["🎯 Main Scripts"]
+        HC["📊 k8s-health-check.sh<br/>(PRE/POST validation)"]
+        CU["⬆️ k8s-cluster-upgrade.sh<br/>(Orchestration)"]
+        OC["🔧 k8s-ops-cmd.sh<br/>(Multi-cluster ops)"]
     end
-    subgraph LIB["Library Modules"]
-        L1[common.sh]
-        L2[config.sh]
-        L3[tmc-context.sh]
-        L4[tmc.sh]
-        L5[health.sh]
-        L6[comparison.sh]
+
+    subgraph LIB["📦 Library Modules"]
+        L1["🔧 common.sh<br/>(Utilities)"]
+        L2["⚙️ config.sh<br/>(Config parsing)"]
+        L3["🔐 tmc-context.sh<br/>(TMC contexts)"]
+        L4["☁️ tmc.sh<br/>(TMC integration)"]
+        L5["❤️ health.sh<br/>(Health metrics)"]
+        L6["📈 comparison.sh<br/>(PRE/POST)"]
     end
-    subgraph SECTIONS["18 Health Sections"]
-        S[sections/*.sh]
+
+    subgraph SECTIONS["📋 Health Checks"]
+        S["18 sections/<br/>Comprehensive audit"]
     end
+
+    subgraph EXT["🌐 External Tools"]
+        E1["tanzu CLI"]
+        E2["kubectl"]
+        E3["jq"]
+    end
+
     HC --> L1 & L2 & L3 & L4 & L5 & L6
     HC --> S
     CU --> L1 & L2 & L3 & L4
     CU -.->|delegates| HC
     OC --> L1 & L2 & L3 & L4
+    L4 --> E1 & E2 & E3
+
+    style HC fill:#e1f5ff
+    style CU fill:#fff3e0
+    style OC fill:#f3e5f5
+    style S fill:#e8f5e9
+    style EXT fill:#fce4ec
 ```
+
+---
 
 ### Health Status Decision Tree
 
 ```mermaid
 flowchart TD
-    A[Collect Metrics] --> B{Nodes NotReady?}
-    B -->|Yes| CRIT[CRITICAL]
-    B -->|No| C{Pods CrashLoop?}
-    C -->|Yes| CRIT
-    C -->|No| D{Pending/NotReady/Failed?}
-    D -->|Yes| WARN[WARNINGS]
-    D -->|No| HEALTHY[HEALTHY]
+    Start["🔍 Collect Metrics"] --> Check1{"⚠️ Nodes<br/>NotReady?"}
+
+    Check1 -->|Yes| CRIT["🔴 CRITICAL<br/>Immediate action required"]
+    Check1 -->|No| Check2{"💥 Pods<br/>CrashLoopBackOff?"}
+
+    Check2 -->|Yes| CRIT
+    Check2 -->|No| Check3{"⏳ Pending/NotReady/<br/>Unaccounted?"}
+
+    Check3 -->|Yes| WARN["🟡 WARNINGS<br/>Monitor and investigate"]
+    Check3 -->|No| HEALTHY["🟢 HEALTHY<br/>All systems nominal"]
+
+    CRIT --> Action1["❌ Abort upgrade<br/>Investigate issues"]
+    WARN --> Action2["⚠️ Prompt user<br/>Proceed with caution"]
+    HEALTHY --> Action3["✅ Auto-proceed<br/>Safe to upgrade"]
+
+    style Start fill:#e3f2fd
+    style Check1 fill:#fff3e0
+    style Check2 fill:#fff3e0
+    style Check3 fill:#fff3e0
+    style CRIT fill:#ffebee
+    style WARN fill:#fff8e1
+    style HEALTHY fill:#e8f5e9
+    style Action1 fill:#ffcdd2
+    style Action2 fill:#ffe0b2
+    style Action3 fill:#c8e6c9
 ```
 
 ### Library Modules
