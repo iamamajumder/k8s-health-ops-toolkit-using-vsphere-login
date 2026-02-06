@@ -194,103 +194,49 @@ Executes commands across multiple clusters with parallel batch execution.
 
 ### Script Architecture
 
-<table>
-<tr>
-<td colspan="3" align="center">
-
-**🎯 MAIN SCRIPTS**
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-**📊 k8s-health-check.sh**<br/>
-PRE/POST validation<br/>
-18 health modules<br/>
-Comparison reports
-
-</td>
-<td align="center">
-
-**⬆️ k8s-cluster-upgrade.sh**<br/>
-Upgrade orchestration<br/>
-Health gates<br/>
-Progress monitoring
-
-</td>
-<td align="center">
-
-**🔧 k8s-ops-cmd.sh**<br/>
-Multi-cluster ops<br/>
-Parallel execution<br/>
-TMC discovery
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-⬇️ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⬇️ *delegates* &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⬇️
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-**📦 LIBRARY MODULES** (`lib/`)
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-`common.sh` - Utilities<br/>
-`config.sh` - Config parsing
-
-</td>
-<td align="center">
-
-`tmc-context.sh` - TMC contexts<br/>
-`tmc.sh` - TMC integration
-
-</td>
-<td align="center">
-
-`health.sh` - Health metrics<br/>
-`comparison.sh` - PRE/POST
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-⬇️
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-**📋 18 HEALTH CHECK SECTIONS** (`lib/sections/`)
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-⬇️
-
-</td>
-</tr>
-<tr>
-<td colspan="3" align="center">
-
-**🌐 EXTERNAL TOOLS**: `tanzu CLI` · `kubectl` · `jq`
-
-</td>
-</tr>
-</table>
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   🎯 MAIN SCRIPTS                                        │
+├─────────────────────────────┬─────────────────────────────┬─────────────────────────────┤
+│                             │                             │                             │
+│  📊 k8s-health-check.sh     │  ⬆️ k8s-cluster-upgrade.sh  │  🔧 k8s-ops-cmd.sh          │
+│  ─────────────────────      │  ────────────────────────   │  ───────────────            │
+│  • PRE/POST validation      │  • Upgrade orchestration    │  • Multi-cluster ops        │
+│  • 18 health modules        │  • Health gates             │  • Parallel execution       │
+│  • Comparison reports       │  • Progress monitoring      │  • TMC discovery            │
+│                             │                             │                             │
+└──────────────┬──────────────┴──────────────┬──────────────┴──────────────┬──────────────┘
+               │                             │                             │
+               │                             │ delegates                   │
+               ▼                             ▼                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              📦 LIBRARY MODULES (lib/)                                   │
+├─────────────────────────────┬─────────────────────────────┬─────────────────────────────┤
+│                             │                             │                             │
+│  common.sh    - Utilities   │  tmc-context.sh - Contexts  │  health.sh     - Metrics    │
+│  config.sh    - Parsing     │  tmc.sh         - TMC API   │  comparison.sh - PRE/POST   │
+│                             │                             │                             │
+└─────────────────────────────┴──────────────┬──────────────┴─────────────────────────────┘
+                                             │
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                        📋 18 HEALTH CHECK SECTIONS (lib/sections/)                       │
+├─────────────────────────────┬─────────────────────────────┬─────────────────────────────┤
+│  01-cluster-overview        │  07-antrea-cni              │  13-resource-quotas         │
+│  02-node-status             │  08-tanzu-vmware            │  14-events                  │
+│  03-pod-status              │  09-security-rbac           │  15-connectivity            │
+│  04-workload-status         │  10-component-status        │  16-images-audit            │
+│  05-storage-status          │  11-helm-releases           │  17-certificates            │
+│  06-networking              │  12-namespaces              │  18-cluster-summary         │
+└─────────────────────────────┴──────────────┬──────────────┴─────────────────────────────┘
+                                             │
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                               🌐 EXTERNAL TOOLS                                          │
+├─────────────────────────────┬─────────────────────────────┬─────────────────────────────┤
+│        tanzu CLI            │          kubectl            │            jq               │
+└─────────────────────────────┴─────────────────────────────┴─────────────────────────────┘
+```
 
 ---
 
