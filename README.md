@@ -199,7 +199,7 @@ Executes commands across multiple clusters with parallel batch execution.
 │                                   🎯 MAIN SCRIPTS                                        │
 ├─────────────────────────────┬─────────────────────────────┬─────────────────────────────┤
 │                             │                             │                             │
-│  📊 k8s-health-check.sh     │  ⬆️ k8s-cluster-upgrade.sh  │  🔧 k8s-ops-cmd.sh          │
+│  📊 k8s-health-check.sh    │  ⬆️ k8s-cluster-upgrade.sh  │  🔧 k8s-ops-cmd.sh          │
 │  ─────────────────────      │  ────────────────────────   │  ───────────────            │
 │  • PRE/POST validation      │  • Upgrade orchestration    │  • Multi-cluster ops        │
 │  • 18 health modules        │  • Health gates             │  • Parallel execution       │
@@ -242,45 +242,111 @@ Executes commands across multiple clusters with parallel batch execution.
 
 ### Health Status Decision Tree
 
-```
-                              ┌─────────────────────┐
-                              │   🔍 COLLECT        │
-                              │      METRICS        │
-                              └──────────┬──────────┘
-                                         │
-                              ┌──────────▼──────────┐
-                              │  Nodes NotReady?    │
-                              └──────────┬──────────┘
-                                         │
-                    ┌────────────────────┼────────────────────┐
-                    │ YES                │                    │ NO
-                    ▼                    │                    ▼
-        ┌───────────────────┐            │         ┌──────────────────────┐
-        │   🔴 CRITICAL     │            │         │ Pods CrashLoopBackOff│
-        │   ───────────     │            │         └──────────┬───────────┘
-        │ • Abort upgrade   │            │                    │
-        │ • Investigate     │◄───────────┘         ┌──────────┼──────────┐
-        │ • Alert team      │            YES       │                     │ NO
-        └───────────────────┘            ┌─────────┘                     ▼
-                                         │              ┌─────────────────────────┐
-                                         │              │ Pending/NotReady/       │
-                                         │              │ Unaccounted Pods?       │
-                                         │              └──────────┬──────────────┘
-                                         │                         │
-                                         │              ┌──────────┼──────────┐
-                                         │              │ YES                 │ NO
-                                         │              ▼                     ▼
-                                         │   ┌───────────────────┐  ┌───────────────────┐
-                                         │   │   🟡 WARNINGS     │  │   🟢 HEALTHY      │
-                                         │   │   ──────────      │  │   ─────────       │
-                                         │   │ • Prompt user     │  │ • Auto-proceed    │
-                                         │   │ • Monitor         │  │ • Safe to upgrade │
-                                         │   │ • Proceed w/      │  │ • All nominal     │
-                                         │   │   caution         │  │                   │
-                                         │   └───────────────────┘  └───────────────────┘
-                                         │
-                                         └─────────────────────────────────────────────────
-```
+<table>
+<tr>
+<td colspan="3" align="center">
+
+**🔍 COLLECT METRICS**
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+⬇️
+
+</td>
+</tr>
+<tr>
+<td colspan="3" align="center">
+
+**❓ Nodes NotReady?**
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+⬇️ **YES**
+
+</td>
+<td align="center">
+
+</td>
+<td align="center">
+
+⬇️ **NO**
+
+</td>
+</tr>
+<tr>
+<td align="center" rowspan="3">
+
+**🔴 CRITICAL**<br/>
+───────────<br/>
+• Abort upgrade<br/>
+• Investigate<br/>
+• Alert team
+
+</td>
+<td align="center">
+
+</td>
+<td align="center">
+
+**❓ Pods CrashLoopBackOff?**
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+⬅️ **YES**
+
+</td>
+<td align="center">
+
+⬇️ **NO**
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+</td>
+<td align="center">
+
+**❓ Pending/NotReady/Unaccounted?**
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+</td>
+<td align="center">
+
+⬇️ **YES** &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⬇️ **NO**
+
+</td>
+<td align="center">
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+</td>
+<td align="center">
+
+**🟡 WARNINGS** &nbsp;&nbsp;&nbsp;&nbsp; **🟢 HEALTHY**
+
+</td>
+<td align="center">
+
+</td>
+</tr>
+</table>
 
 <table>
 <tr>
