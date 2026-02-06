@@ -4,8 +4,8 @@
 
 **Health Check, Upgrade & Multi-Cluster Operations for VMware Tanzu**
 
-[![VCF Support](https://img.shields.io/badge/VCF-5.2.1-blue?style=flat-square)]()
-[![Kubernetes](https://img.shields.io/badge/K8s-1.28--1.29-326CE5?style=flat-square&logo=kubernetes&logoColor=white)]()
+[![VCF Support](https://img.shields.io/badge/VKS 3.3.3-blue?style=flat-square)]()
+[![Kubernetes](https://img.shields.io/badge/K8s-1.28--1.32-326CE5?style=flat-square&logo=kubernetes&logoColor=white)]()
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Bash](https://img.shields.io/badge/Bash-4.0%2B-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)]()
 [![TMC](https://img.shields.io/badge/TMC-Self--Managed-orange?style=flat-square)]()
@@ -35,9 +35,9 @@
 
 ## What is This?
 
-A production-ready toolkit for managing Kubernetes clusters in VMware Cloud Foundation environments. Three scripts that automate health validation, orchestrate upgrades, and execute commands across multiple clusters through Tanzu Mission Control integration.
+A production-ready toolkit for managing Kubernetes clusters in VMware Kubernetes Service environments. Three scripts that automate health validation, orchestrate upgrades, and execute commands across multiple clusters through Tanzu Mission Control integration.
 
-**Built for**: Platform engineers and SREs managing VMware Tanzu Kubernetes clusters who need reliable pre/post change validation, automated upgrades with rollback safety, and efficient multi-cluster operations.
+**Built for**: Platform engineers and SREs managing VKS clusters who need reliable pre/post change validation, automated upgrades with rollback safety, and efficient multi-cluster operations.
 
 ---
 
