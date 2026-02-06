@@ -533,8 +533,6 @@ ${line}"
     else
         echo -e "Failed: ${failed_count}"
     fi
-    echo ""
-    echo -e "${CYAN}Results saved to:${NC} ${output_file}"
 }
 
 #===============================================================================
