@@ -4,6 +4,15 @@
 
 ### New Features ✨
 
+#### Portable Output Directory Structure
+- **Repository-Agnostic Output Location**: Changed output directory from `~/k8s-health-check/output/` to `<script-dir>/output/` for portability
+- **Benefits**:
+  - Independent of repository name (works with any project name)
+  - Output stays with the toolkit installation
+  - Easier to manage multiple installations
+- **Centralized Configuration**: Added `OUTPUT_BASE_DIR` constant in `lib/common.sh`
+- **All Scripts Updated**: k8s-health-check.sh, k8s-cluster-upgrade.sh, k8s-ops-cmd.sh, lib/tmc.sh
+
 #### Automated vSphere Login (`lib/vsphere-login.sh`)
 - **Background vSphere Login Process**: Automatically logs into Supervisor clusters and Workload clusters using `kubectl vsphere login` as a background process, running parallel to main operations
 - **Dual Credential System**:

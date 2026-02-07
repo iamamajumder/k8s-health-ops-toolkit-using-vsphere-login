@@ -93,7 +93,7 @@ Arguments:
   clusters.conf     Path to configuration file with cluster names (one per line)
                     Default: ./clusters.conf
   pre-results-dir   (POST mode only) Path to PRE-change results directory
-                    Default: ~/k8s-health-check/output/
+                    Default: <script-dir>/output/
 
 Example clusters.conf:
   prod-workload-01
@@ -134,7 +134,7 @@ Examples:
 
   # POST-change health check (parallel by default)
   $0 --mode post
-  $0 --mode post ./clusters.conf ~/k8s-health-check/output
+  $0 --mode post ./clusters.conf <script-dir>/output
 
   # Sequential execution (one cluster at a time)
   $0 --mode pre --sequential
@@ -740,7 +740,7 @@ run_health_checks() {
 
     # Create output base directory (new consolidated structure)
     local timestamp=$(get_timestamp)
-    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_base_dir="${OUTPUT_BASE_DIR}"
     mkdir -p "${output_base_dir}"
 
     # Get cluster list
@@ -1071,7 +1071,7 @@ parse_arguments() {
         # Single cluster mode - config_file already set above
         # For POST mode, set default PRE results path
         if [[ "${CHECK_MODE}" == "post" ]]; then
-            pre_results_dir="${HOME}/k8s-health-check/output"
+            pre_results_dir="${OUTPUT_BASE_DIR}"
             if [[ ! -d "${pre_results_dir}" ]]; then
                 error "No PRE-change results found"
                 error "Run the PRE-change health check first: $0 --mode pre -c ${SINGLE_CLUSTER}"
@@ -1085,7 +1085,7 @@ parse_arguments() {
         # POST mode: config_file and/or pre_results_dir
         if [[ $# -eq 0 ]]; then
             # No arguments - use consolidated structure
-            pre_results_dir="${HOME}/k8s-health-check/output"
+            pre_results_dir="${OUTPUT_BASE_DIR}"
 
             if [[ ! -d "${pre_results_dir}" ]]; then
                 error "No PRE-change results found"
@@ -1098,7 +1098,7 @@ parse_arguments() {
                 pre_results_dir="$1"
             else
                 config_file="$1"
-                pre_results_dir="${HOME}/k8s-health-check/output"
+                pre_results_dir="${OUTPUT_BASE_DIR}"
             fi
         else
             # Two arguments - detect which is which

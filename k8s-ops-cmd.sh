@@ -152,7 +152,7 @@ execute_on_cluster() {
     local exit_code=0
 
     # Use consolidated kubeconfig location (no temp dir needed)
-    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_base_dir="${OUTPUT_BASE_DIR}"
     local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
 
     # Setup TMC context and fetch kubeconfig
@@ -675,7 +675,7 @@ run_ops_command() {
     fi
 
     # Create aggregated output in dedicated ops-aggregated directory
-    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_base_dir="${OUTPUT_BASE_DIR}"
     local aggregated_dir="${output_base_dir}/ops-aggregated"
     mkdir -p "${aggregated_dir}"
     local output_file="${aggregated_dir}/ops-${timestamp}.txt"

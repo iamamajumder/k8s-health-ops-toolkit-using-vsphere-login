@@ -120,7 +120,7 @@ EXAMPLES:
     $0 -c prod-workload-01 --dry-run
 
 OUTPUT:
-    ~/k8s-health-check/output/cluster-name/upgrade/
+    <script-dir>/output/cluster-name/upgrade/
     ├── pre-hcr-YYYYMMDD_HHMMSS.txt     (PRE health check report)
     ├── upgrade-log-YYYYMMDD_HHMMSS.txt  (Upgrade execution and monitoring)
     └── post-hcr-YYYYMMDD_HHMMSS.txt    (POST health check report)
@@ -169,7 +169,7 @@ run_pre_health_check() {
         rm -f "${temp_config}"
 
         # Find the latest PRE results in new consolidated structure
-        local output_base_dir="${HOME}/k8s-health-check/output"
+        local output_base_dir="${OUTPUT_BASE_DIR}"
         local pre_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
         local latest_pre=$(ls -t "${pre_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
 
@@ -308,7 +308,7 @@ get_node_count() {
     local cluster_name="$1"
 
     # Use cached kubeconfig from health check (should already exist)
-    local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    local cluster_kubeconfig="${OUTPUT_BASE_DIR}/${cluster_name}/kubeconfig"
 
     # Get node count using cluster-specific kubeconfig
     if [[ -f "${cluster_kubeconfig}" ]]; then
@@ -346,7 +346,7 @@ monitor_upgrade_progress() {
     fi
 
     # Check if kubeconfig exists from health check (should already be cached)
-    local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    local cluster_kubeconfig="${OUTPUT_BASE_DIR}/${cluster_name}/kubeconfig"
     local use_kubectl_monitoring=false
 
     if [[ -f "${cluster_kubeconfig}" ]]; then
@@ -536,7 +536,7 @@ run_post_health_check() {
         rm -f "${temp_config}"
 
         # Find the latest POST results in new consolidated structure
-        local output_base_dir="${HOME}/k8s-health-check/output"
+        local output_base_dir="${OUTPUT_BASE_DIR}"
         local post_hcr_dir="${output_base_dir}/${cluster_name}/h-c-r"
         local latest_post=$(ls -t "${post_hcr_dir}"/post-hcr-*.txt 2>/dev/null | head -1)
 
@@ -568,7 +568,7 @@ upgrade_single_cluster() {
 
     # Create output directory (new consolidated structure)
     local timestamp=$(get_timestamp)
-    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_base_dir="${OUTPUT_BASE_DIR}"
     local output_dir="${output_base_dir}/${cluster_name}/upgrade"
     mkdir -p "${output_dir}"
 
@@ -620,7 +620,7 @@ upgrade_single_cluster() {
     # Step 4: Get PRE-upgrade version for verification (using cached kubeconfig from health check)
     progress "Getting current cluster version..."
 
-    local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    local cluster_kubeconfig="${OUTPUT_BASE_DIR}/${cluster_name}/kubeconfig"
     local pre_version="unknown"
 
     # Use the kubeconfig that was already fetched during health check
@@ -786,7 +786,7 @@ upgrade_multiple_clusters() {
     echo ""
 
     # Run cleanup for all clusters
-    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_base_dir="${OUTPUT_BASE_DIR}"
     while IFS= read -r cluster_name; do
         cleanup_old_files "${output_base_dir}/${cluster_name}" "upgrade"
     done <<< "${cluster_list}"
@@ -950,7 +950,7 @@ upgrade_clusters_parallel() {
             echo -e "${MAGENTA}[${display_idx}/${total}]${NC} PRE health check: ${YELLOW}${cluster_name}${NC}..."
 
             # Create output directory
-            local output_base_dir="${HOME}/k8s-health-check/output"
+            local output_base_dir="${OUTPUT_BASE_DIR}"
             local output_dir="${output_base_dir}/${cluster_name}/upgrade"
             mkdir -p "${output_dir}"
 
@@ -981,7 +981,7 @@ upgrade_clusters_parallel() {
             local provisioner=$(echo "${inputs}" | cut -d'|' -f2)
 
             # Get pre-upgrade version
-            local cluster_kubeconfig="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+            local cluster_kubeconfig="${OUTPUT_BASE_DIR}/${cluster_name}/kubeconfig"
             local pre_version="unknown"
             if [[ -f "${cluster_kubeconfig}" ]]; then
                 pre_version=$(kubectl --kubeconfig="${cluster_kubeconfig}" version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // empty' | tr -d ' \n\r')
@@ -1024,7 +1024,7 @@ upgrade_clusters_parallel() {
 
         # Phase 3: Monitor all confirmed clusters in parallel
         echo ""
-        progress "Monitoring ${#confirmed_clusters[@]} cluster(s) in parallel (logs: ~/k8s-health-check/output/<cluster>/upgrade/)"
+        progress "Monitoring ${#confirmed_clusters[@]} cluster(s) in parallel (logs: ${OUTPUT_BASE_DIR}/<cluster>/upgrade/)"
         echo ""
 
         local results_file=$(mktemp)
@@ -1073,7 +1073,7 @@ upgrade_clusters_parallel() {
             fi
 
             # Check the upgrade log for final status
-            local cluster_output_dir="${HOME}/k8s-health-check/output/${cluster_name}/upgrade"
+            local cluster_output_dir="${OUTPUT_BASE_DIR}/${cluster_name}/upgrade"
             local status_indicator="?"
 
             if [[ -f "${cluster_output_dir}/.post-version" ]]; then
@@ -1156,7 +1156,7 @@ upgrade_clusters_parallel() {
     echo ""
 
     # Run cleanup for all clusters
-    local output_base_dir="${HOME}/k8s-health-check/output"
+    local output_base_dir="${OUTPUT_BASE_DIR}"
     while IFS= read -r cluster_name; do
         cleanup_old_files "${output_base_dir}/${cluster_name}" "upgrade"
     done < <(echo "${cluster_list}")

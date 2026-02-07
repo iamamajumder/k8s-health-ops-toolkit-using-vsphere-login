@@ -173,7 +173,7 @@ fetch_kubeconfig_auto() {
     local output_file="${2:-}"
 
     # Consolidated kubeconfig path (new structure)
-    local consolidated_path="${HOME}/k8s-health-check/output/${cluster_name}/kubeconfig"
+    local consolidated_path="${OUTPUT_BASE_DIR}/${cluster_name}/kubeconfig"
 
     # Create cluster directory if not exists
     mkdir -p "$(dirname "${consolidated_path}")" 2>/dev/null

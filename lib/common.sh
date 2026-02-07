@@ -7,6 +7,10 @@
 # Default configuration constants
 export DEFAULT_BATCH_SIZE=6  # Default batch size for parallel execution
 
+# Output directory - relative to script location for portability
+# This ensures output directory is consistent regardless of repository name
+export OUTPUT_BASE_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/output"
+
 # Colors for output
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'

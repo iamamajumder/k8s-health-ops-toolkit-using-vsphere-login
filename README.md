@@ -380,7 +380,7 @@ declare -A SUPERVISOR_IP_MAP=(
 
 ## Output & Reports
 
-All reports are saved to `~/k8s-health-check/output/<cluster-name>/`:
+All reports are saved to `<script-dir>/output/<cluster-name>/`:
 
 | Directory | Contents |
 |-----------|----------|
@@ -390,7 +390,7 @@ All reports are saved to `~/k8s-health-check/output/<cluster-name>/`:
 | `upgrade/` | Upgrade logs and health reports |
 | `kubeconfig` | Cached cluster credentials (12-hour expiry) |
 
-**Aggregated results** for multi-cluster operations: `~/k8s-health-check/output/ops-aggregated/`
+**Aggregated results** for multi-cluster operations: `<script-dir>/output/ops-aggregated/`
 
 ### PRE vs POST Comparison Example
 
