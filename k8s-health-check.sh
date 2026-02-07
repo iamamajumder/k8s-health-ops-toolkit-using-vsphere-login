@@ -25,6 +25,7 @@ source "${SCRIPT_DIR}/lib/tmc-context.sh"
 source "${SCRIPT_DIR}/lib/tmc.sh"
 source "${SCRIPT_DIR}/lib/health.sh"
 source "${SCRIPT_DIR}/lib/comparison.sh"
+source "${SCRIPT_DIR}/lib/vsphere-login.sh"
 
 # Source all health check sections
 for section in "${SCRIPT_DIR}"/lib/sections/*.sh; do
@@ -760,12 +761,16 @@ run_health_checks() {
     local failed_clusters=()
     declare -a cluster_summaries=()
 
+    # Prepare TMC contexts sequentially first (for both parallel and sequential modes)
+    echo ""
+    prepare_tmc_contexts "${config_file}"
+    echo ""
+
+    # Start vSphere login in background
+    start_vsphere_login_background "${cluster_list}"
+
     if [[ "${parallel}" == "true" ]]; then
         # Parallel execution (batch-based)
-        echo ""
-
-        # Prepare TMC contexts sequentially first (to avoid race conditions)
-        prepare_tmc_contexts "${config_file}"
         echo ""
 
         # Run health checks in parallel batches

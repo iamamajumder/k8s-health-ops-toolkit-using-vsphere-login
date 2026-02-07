@@ -21,6 +21,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/tmc-context.sh"
 source "${SCRIPT_DIR}/lib/tmc.sh"
+source "${SCRIPT_DIR}/lib/vsphere-login.sh"
 
 #===============================================================================
 # Script Configuration
@@ -630,7 +631,10 @@ run_ops_command() {
             exit 1
         fi
     fi
-    # Note: For management discovery mode (-m), context is already prepared at line 570
+    # Note: For management discovery mode (-m), context is already prepared at line 582
+
+    # Start vSphere login in background (for both management and file-based modes)
+    start_vsphere_login_background "${cluster_list}"
 
     # Create timestamp for output files
     local timestamp=$(get_timestamp)

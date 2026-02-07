@@ -64,17 +64,21 @@ cd kubernetes-health-ops-toolkit
 vi lib/tmc-context.sh
 # Set NON_PROD_DNS and PROD_DNS on lines 7-8
 
-# 3. Create cluster list
+# 3. Configure Supervisor IPs for vSphere login (one-time setup)
+vi lib/vsphere-login.sh
+# Update SUPERVISOR_IP_MAP with actual Supervisor cluster IPs/FQDNs (lines 16-26)
+
+# 4. Create cluster list
 cat > clusters.conf << EOF
 prod-workload-01
 prod-workload-02
 uat-system-01
 EOF
 
-# 4. Make scripts executable
+# 5. Make scripts executable
 chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
 
-# 5. Run your first health check
+# 6. Run your first health check
 ./k8s-health-check.sh --mode pre
 ```
 
@@ -310,6 +314,7 @@ Executes commands across multiple clusters with parallel batch execution.
 | `tmc.sh` | TMC integration, metadata discovery, kubeconfig fetching |
 | `health.sh` | Health metrics collection and status calculation |
 | `comparison.sh` | PRE/POST comparison logic and report generation |
+| `vsphere-login.sh` | Automated `kubectl vsphere login` for Supervisor and Workload clusters |
 
 ---
 
@@ -344,12 +349,31 @@ Cluster names determine the TMC context automatically:
 | `*-uat-[1-4]` | Non-production | tmc-sm-nonprod |
 | `*-system-[1-4]` | Non-production | tmc-sm-nonprod |
 
+### vSphere Supervisor IP Configuration
+
+Edit `lib/vsphere-login.sh` (lines 16-26) to configure Supervisor cluster IPs/FQDNs:
+
+```bash
+declare -A SUPERVISOR_IP_MAP=(
+    ["prod-1"]="<supervisor-prod-1-ip-or-fqdn>"
+    ["prod-2"]="<supervisor-prod-2-ip-or-fqdn>"
+    ["prod-3"]="<supervisor-prod-3-ip-or-fqdn>"
+    ["prod-4"]="<supervisor-prod-4-ip-or-fqdn>"
+    ["system-1"]="<supervisor-system-1-ip-or-fqdn>"
+    ["system-3"]="<supervisor-system-3-ip-or-fqdn>"
+    ["uat-2"]="<supervisor-uat-2-ip-or-fqdn>"
+    ["uat-4"]="<supervisor-uat-4-ip-or-fqdn>"
+)
+```
+
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `TMC_SELF_MANAGED_USERNAME` | TMC username (prompts if not set) |
-| `TMC_SELF_MANAGED_PASSWORD` | TMC password (prompts if not set) |
+| `TMC_SELF_MANAGED_USERNAME` | TMC username (AO account, prompts if not set) |
+| `TMC_SELF_MANAGED_PASSWORD` | TMC password (AO account, prompts if not set) |
+| `VSPHERE_NONPROD_USERNAME` | vSphere Non-AO username for non-prod workload login (prompts if needed) |
+| `VSPHERE_NONPROD_PASSWORD` | vSphere Non-AO password for non-prod workload login (prompts if needed) |
 | `DEBUG` | Set to `on` for verbose output |
 
 ---
@@ -445,6 +469,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Highlights |
 |---------|------------|
+| **4.1** | vSphere login automation for Supervisor and Workload clusters, background process, dual credential system |
 | **3.8** | Codebase refactoring (~455 lines removed), shared functions, data-driven comparison |
 | **3.7** | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes |
 | **3.6** | Per-cluster output structure, consolidated kubeconfig, automatic cleanup |

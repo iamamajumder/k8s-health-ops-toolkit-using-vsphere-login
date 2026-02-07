@@ -35,6 +35,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/tmc-context.sh"
 source "${SCRIPT_DIR}/lib/tmc.sh"
+source "${SCRIPT_DIR}/lib/vsphere-login.sh"
 
 # Default configuration
 TIMEOUT_MULTIPLIER=5  # Minutes per node
@@ -574,6 +575,17 @@ upgrade_single_cluster() {
     print_section "Upgrading Cluster: ${cluster_name}"
     echo ""
 
+    # Prepare TMC context and start vSphere login
+    if ! prompt_tmc_credentials; then
+        error "Failed to get TMC credentials. Aborting upgrade."
+        return 1
+    fi
+    if ! ensure_tmc_context "${cluster_name}"; then
+        error "Failed to create TMC context. Aborting upgrade."
+        return 1
+    fi
+    start_vsphere_login_background "${cluster_name}"
+
     # Step 1: Run PRE-upgrade health check
     if ! run_pre_health_check "${cluster_name}" "${output_dir}"; then
         error "PRE-upgrade health check failed. Aborting upgrade."
@@ -723,6 +735,15 @@ upgrade_multiple_clusters() {
     print_section "Multi-Cluster Upgrade"
     echo "Total clusters: ${total}"
     echo "Config file: ${config_file}"
+    echo ""
+
+    # Prepare TMC contexts and start vSphere login
+    if ! prompt_tmc_credentials; then
+        error "Failed to get TMC credentials. Aborting upgrade."
+        exit 1
+    fi
+    prepare_tmc_contexts "${config_file}"
+    start_vsphere_login_background "${cluster_list}"
     echo ""
 
     while IFS= read -r cluster_name; do
@@ -883,6 +904,9 @@ upgrade_clusters_parallel() {
 
     # Prepare TMC contexts sequentially first (avoid race conditions)
     prepare_tmc_contexts "${config_file}"
+
+    # Start vSphere login in background
+    start_vsphere_login_background "${cluster_list}"
     echo ""
 
     # Convert cluster list to array
