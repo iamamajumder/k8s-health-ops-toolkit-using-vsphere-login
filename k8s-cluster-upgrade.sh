@@ -1007,6 +1007,7 @@ upgrade_clusters_parallel() {
         > "${results_file}"
 
         declare -A pids=()
+        declare -A cluster_result_files=()
         for ((j=0; j<${#confirmed_clusters[@]}; j++)); do
             # Skip clusters that failed to initiate
             if [[ "${confirmed_pre_ver[$j]}" == "UPGRADE_FAILED" ]]; then
@@ -1023,7 +1024,10 @@ upgrade_clusters_parallel() {
             local node_count=$(get_node_count "${cluster_name}")
             local timeout_minutes=$((node_count * TIMEOUT_MULTIPLIER))
 
-            monitor_and_post_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}" "${results_file}" &
+            local cluster_rf=$(mktemp)
+            cluster_result_files["${cluster_name}"]="${cluster_rf}"
+
+            monitor_and_post_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}" "${cluster_rf}" &
             pids["${cluster_name}"]=$!
         done
 
@@ -1037,6 +1041,12 @@ upgrade_clusters_parallel() {
             local pid=${pids[$cluster_name]}
             wait ${pid} 2>/dev/null
             local wait_result=$?
+
+            # Append per-cluster results to main results file (atomic, sequential)
+            if [[ -f "${cluster_result_files[$cluster_name]}" ]]; then
+                cat "${cluster_result_files[$cluster_name]}" >> "${results_file}"
+                rm -f "${cluster_result_files[$cluster_name]}"
+            fi
 
             # Check the upgrade log for final status
             local cluster_output_dir="${HOME}/k8s-health-check/output/${cluster_name}/upgrade"

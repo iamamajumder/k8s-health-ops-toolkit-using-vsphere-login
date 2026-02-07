@@ -4,6 +4,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| [v4.0.1](#version-401-2026-02-07) | 2026-02-07 | Bug fix - Parallel execution race condition & missing comparison reports |
 | [v4.0](#version-40-2026-02-06) | 2026-02-06 | Documentation overhaul - README-DEV.md beautification |
 | [v3.8](#version-38-2026-02-05) | 2026-02-05 | Codebase refactoring (~455 lines removed) |
 | [v3.7](#version-37-2026-02-05) | 2026-02-05 | Parallel upgrades, `-c` flag for health-check/ops-cmd |
@@ -15,6 +16,35 @@
 | [v3.2](#version-32-2026-01-28) | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |
 | [v3.1](#version-31-2025-01-22) | 2025-01-22 | Auto-discovery, auto-context, unified execution |
 | [v3.0](#version-30-initial-release) | Initial | Basic health check functionality |
+
+---
+
+## Version 4.0.1 (2026-02-07)
+
+**Summary:** Bug fix release — fixes duplicate cluster output in parallel execution, missing POST comparison reports, and removes legacy backward compatibility code.
+
+### Bug Fixes
+
+| Component | Issue | Fix |
+|-----------|-------|-----|
+| `k8s-health-check.sh` | Parallel execution produces duplicate cluster data in Results Summary (first cluster's name/metrics repeated for all clusters) | Per-cluster temp files for background processes; results concatenated sequentially after `wait` instead of concurrent appends to a shared file |
+| `k8s-health-check.sh` | POST comparison report missing for some clusters when `latest/` directory wasn't populated by a prior buggy PRE run | Added fallback to search `h-c-r/` directory directly for `pre-hcr-*.txt` files when `latest/` is empty |
+| `k8s-health-check.sh` | `current_metrics=()` does not reliably clear `declare -A` associative arrays, causing stale keys from previous cluster block to persist | Replaced with `unset current_metrics; declare -A current_metrics` |
+| `k8s-cluster-upgrade.sh` | Same parallel race condition as health-check — concurrent writes to shared results file corrupt marker-based blocks | Per-cluster temp files for `monitor_and_post_upgrade` background processes |
+| `k8s-ops-cmd.sh` | Same parallel race condition in both `run_parallel()` and `run_parallel_with_list()` functions | Per-cluster temp files for `execute_on_cluster` background processes |
+
+### Cleanup
+
+#### Removed Old Folder Structure Backward Compatibility
+- Removed `default_latest_dir="./health-check-results/latest"` variable and all references
+- Removed fallback to `health-check-report.txt` filename (old structure) in both `process_cluster()` and `process_cluster_parallel()`
+- Removed legacy structure fallback in POST mode argument parsing (single cluster and multi-cluster)
+- Removed symlink resolution logic (old structure used symlinks; new structure uses `latest/` directory)
+- Updated usage text and examples to reflect new consolidated output path (`~/k8s-health-check/output/`)
+
+### Breaking Changes
+
+**None** — Old `Archive/v3.2/` scripts are unmodified and remain for reference. All active scripts now exclusively use the consolidated output structure introduced in v3.6.
 
 ---
 

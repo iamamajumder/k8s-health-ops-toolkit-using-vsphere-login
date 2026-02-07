@@ -92,7 +92,7 @@ Arguments:
   clusters.conf     Path to configuration file with cluster names (one per line)
                     Default: ./clusters.conf
   pre-results-dir   (POST mode only) Path to PRE-change results directory
-                    Default: ./health-check-results/latest/
+                    Default: ~/k8s-health-check/output/
 
 Example clusters.conf:
   prod-workload-01
@@ -133,7 +133,7 @@ Examples:
 
   # POST-change health check (parallel by default)
   $0 --mode post
-  $0 --mode post ./clusters.conf ./health-check-results/pre-20250122_143000
+  $0 --mode post ./clusters.conf ~/k8s-health-check/output
 
   # Sequential execution (one cluster at a time)
   $0 --mode pre --sequential
@@ -263,17 +263,17 @@ process_cluster() {
     if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
         local pre_report=""
 
-        # Try new structure first (consolidated)
+        # Try new structure first (consolidated) - latest/ directory
         local new_pre_latest="${pre_results_dir}/${cluster_name}/h-c-r/latest"
         if [[ -d "${new_pre_latest}" ]]; then
             pre_report=$(ls -t "${new_pre_latest}"/pre-hcr-*.txt 2>/dev/null | head -1)
         fi
 
-        # Fallback to old structure for backward compatibility
+        # Fallback: Try h-c-r directory directly (in case latest/ wasn't updated)
         if [[ -z "${pre_report}" || ! -f "${pre_report}" ]]; then
-            local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
-            if [[ -f "${pre_cluster_dir}/health-check-report.txt" ]]; then
-                pre_report="${pre_cluster_dir}/health-check-report.txt"
+            local cluster_hcr_dir="${pre_results_dir}/${cluster_name}/h-c-r"
+            if [[ -d "${cluster_hcr_dir}" ]]; then
+                pre_report=$(ls -t "${cluster_hcr_dir}"/pre-hcr-*.txt 2>/dev/null | head -1)
             fi
         fi
 
@@ -365,17 +365,17 @@ process_cluster_parallel() {
     if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then
         local pre_report=""
 
-        # Try new structure first (consolidated)
+        # Try new structure first (consolidated) - latest/ directory
         local new_pre_latest="${pre_results_dir}/${cluster_name}/h-c-r/latest"
         if [[ -d "${new_pre_latest}" ]]; then
             pre_report=$(ls -t "${new_pre_latest}"/pre-hcr-*.txt 2>/dev/null | head -1)
         fi
 
-        # Fallback to old structure for backward compatibility
+        # Fallback: Try h-c-r directory directly (in case latest/ wasn't updated)
         if [[ -z "${pre_report}" || ! -f "${pre_report}" ]]; then
-            local pre_cluster_dir="${pre_results_dir}/${cluster_name}"
-            if [[ -f "${pre_cluster_dir}/health-check-report.txt" ]]; then
-                pre_report="${pre_cluster_dir}/health-check-report.txt"
+            local cluster_hcr_dir_fb="${pre_results_dir}/${cluster_name}/h-c-r"
+            if [[ -d "${cluster_hcr_dir_fb}" ]]; then
+                pre_report=$(ls -t "${cluster_hcr_dir_fb}"/pre-hcr-*.txt 2>/dev/null | head -1)
             fi
         fi
 
@@ -470,8 +470,9 @@ run_health_checks_parallel() {
 
         echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
 
-        # Array to store PIDs for this batch
+        # Array to store PIDs and per-cluster result files for this batch
         declare -A pids=()
+        declare -A cluster_result_files=()
 
         # Launch batch
         for ((i=batch_start; i<batch_end; i++)); do
@@ -479,7 +480,10 @@ run_health_checks_parallel() {
             local display_idx=$((i + 1))
             echo -e "${MAGENTA}[${display_idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
 
-            process_cluster_parallel "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}" "${results_file}" &
+            local cluster_rf=$(mktemp)
+            cluster_result_files["${cluster_name}"]="${cluster_rf}"
+
+            process_cluster_parallel "${cluster_name}" "${output_base_dir}" "${mode}" "${pre_results_dir}" "${cluster_rf}" &
             pids["${cluster_name}"]=$!
         done
 
@@ -489,6 +493,11 @@ run_health_checks_parallel() {
 
         for cluster_name in "${!pids[@]}"; do
             wait ${pids[$cluster_name]} 2>/dev/null
+            # Append per-cluster results to main results file (atomic, sequential)
+            if [[ -f "${cluster_result_files[$cluster_name]}" ]]; then
+                cat "${cluster_result_files[$cluster_name]}" >> "${results_file}"
+                rm -f "${cluster_result_files[$cluster_name]}"
+            fi
         done
 
         success "Batch ${batch_num} completed"
@@ -521,7 +530,8 @@ run_health_checks_parallel() {
     while IFS= read -r line; do
         if [[ "${line}" == "===CLUSTER_START===" ]]; then
             in_block=true
-            current_metrics=()
+            unset current_metrics
+            declare -A current_metrics
             continue
         fi
 
@@ -969,7 +979,6 @@ run_health_checks() {
 parse_arguments() {
     local config_file="./clusters.conf"
     local pre_results_dir=""
-    local default_latest_dir="./health-check-results/latest"
 
     # Parse named arguments first
     while [[ $# -gt 0 ]]; do
@@ -1059,12 +1068,9 @@ parse_arguments() {
         if [[ "${CHECK_MODE}" == "post" ]]; then
             pre_results_dir="${HOME}/k8s-health-check/output"
             if [[ ! -d "${pre_results_dir}" ]]; then
-                pre_results_dir="${default_latest_dir}"
-                if [[ ! -d "${pre_results_dir}" ]]; then
-                    error "No PRE-change results found"
-                    error "Run the PRE-change health check first: $0 --mode pre -c ${SINGLE_CLUSTER}"
-                    exit 1
-                fi
+                error "No PRE-change results found"
+                error "Run the PRE-change health check first: $0 --mode pre -c ${SINGLE_CLUSTER}"
+                exit 1
             fi
         fi
     elif [[ "${CHECK_MODE}" == "pre" ]]; then
@@ -1073,22 +1079,13 @@ parse_arguments() {
     else
         # POST mode: config_file and/or pre_results_dir
         if [[ $# -eq 0 ]]; then
-            # No arguments - use new consolidated structure
-            # PRE results are now in ~/k8s-health-check/output/<cluster>/h-c-r/latest/
+            # No arguments - use consolidated structure
             pre_results_dir="${HOME}/k8s-health-check/output"
 
-            # Check if new structure exists, fallback to old structure for backward compatibility
             if [[ ! -d "${pre_results_dir}" ]]; then
-                # Try old structure
-                pre_results_dir="${default_latest_dir}"
-                if [[ ! -d "${pre_results_dir}" ]]; then
-                    error "No PRE-change results found"
-                    error "Run the PRE-change health check first: $0 --mode pre"
-                    exit 1
-                fi
-                progress "Using PRE-change results from legacy structure: ${pre_results_dir}"
-            else
-                progress "Using PRE-change results from consolidated structure"
+                error "No PRE-change results found"
+                error "Run the PRE-change health check first: $0 --mode pre"
+                exit 1
             fi
         elif [[ $# -eq 1 ]]; then
             # Single argument - detect if it's a directory or file
@@ -1096,7 +1093,7 @@ parse_arguments() {
                 pre_results_dir="$1"
             else
                 config_file="$1"
-                pre_results_dir="${default_latest_dir}"
+                pre_results_dir="${HOME}/k8s-health-check/output"
             fi
         else
             # Two arguments - detect which is which
@@ -1110,12 +1107,6 @@ parse_arguments() {
                 config_file="$1"
                 pre_results_dir="$2"
             fi
-        fi
-
-        # Resolve symlinks for display
-        if [[ -L "${pre_results_dir}" ]]; then
-            local actual_pre_dir=$(readlink -f "${pre_results_dir}" 2>/dev/null || readlink "${pre_results_dir}" 2>/dev/null || echo "${pre_results_dir}")
-            progress "Resolved 'latest' symlink to: ${actual_pre_dir}"
         fi
     fi
 

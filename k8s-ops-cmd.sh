@@ -253,20 +253,30 @@ run_parallel_with_list() {
         echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
 
         declare -a pids=()
+        declare -a cluster_rfs=()
 
         for ((i=batch_start; i<batch_end; i++)); do
             local cluster="${clusters[$i]}"
             local display_idx=$((i + 1))
             echo -e "${MAGENTA}[${display_idx}/${total_clusters}]${NC} Launching: ${YELLOW}${cluster}${NC}"
-            execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${results_file}" "${timestamp}" &
+
+            local cluster_rf=$(mktemp)
+            cluster_rfs+=("${cluster_rf}")
+
+            execute_on_cluster "${cluster}" "${command}" "${timeout_sec}" "${cluster_rf}" "${timestamp}" &
             pids+=($!)
         done
 
         # Wait for all processes in this batch
         echo ""
         progress "Waiting for batch ${batch_num} to complete..."
-        for pid in "${pids[@]}"; do
-            wait $pid 2>/dev/null
+        for idx in "${!pids[@]}"; do
+            wait ${pids[$idx]} 2>/dev/null
+            # Append per-cluster results to main results file (atomic, sequential)
+            if [[ -f "${cluster_rfs[$idx]}" ]]; then
+                cat "${cluster_rfs[$idx]}" >> "${results_file}"
+                rm -f "${cluster_rfs[$idx]}"
+            fi
         done
 
         success "Batch ${batch_num} completed"
@@ -344,8 +354,9 @@ run_parallel() {
 
         echo -e "${CYAN}━━━ Batch ${batch_num}/${num_batches} (${batch_count} clusters) ━━━${NC}"
 
-        # Array to store PIDs for this batch
+        # Array to store PIDs and per-cluster result files for this batch
         declare -A pids=()
+        declare -A cluster_result_files=()
 
         # Launch batch
         for ((i=batch_start; i<batch_end; i++)); do
@@ -353,7 +364,10 @@ run_parallel() {
             local display_idx=$((i + 1))
             echo -e "${MAGENTA}[${display_idx}/${cluster_count}]${NC} Launching: ${YELLOW}${cluster_name}${NC}"
 
-            execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${results_file}" "${timestamp}" &
+            local cluster_rf=$(mktemp)
+            cluster_result_files["${cluster_name}"]="${cluster_rf}"
+
+            execute_on_cluster "${cluster_name}" "${command}" "${timeout_sec}" "${cluster_rf}" "${timestamp}" &
             pids["${cluster_name}"]=$!
         done
 
@@ -363,6 +377,11 @@ run_parallel() {
 
         for cluster_name in "${!pids[@]}"; do
             wait ${pids[$cluster_name]} 2>/dev/null
+            # Append per-cluster results to main results file (atomic, sequential)
+            if [[ -f "${cluster_result_files[$cluster_name]}" ]]; then
+                cat "${cluster_result_files[$cluster_name]}" >> "${results_file}"
+                rm -f "${cluster_result_files[$cluster_name]}"
+            fi
         done
 
         success "Batch ${batch_num} completed"
