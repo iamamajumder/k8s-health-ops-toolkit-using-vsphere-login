@@ -273,12 +273,19 @@ _setup_tmc_context() {
     fi
 
     # Create context using exported credentials
-    if TMC_SELF_MANAGED_USERNAME="${TMC_SELF_MANAGED_USERNAME}" \
+    # Capture error output for debugging
+    local tanzu_output
+    local tanzu_exit_code
+
+    tanzu_output=$(TMC_SELF_MANAGED_USERNAME="${TMC_SELF_MANAGED_USERNAME}" \
        TMC_SELF_MANAGED_PASSWORD="${TMC_SELF_MANAGED_PASSWORD}" \
        tanzu tmc context create "${context_name}" \
            --endpoint "${endpoint}" \
            -i pinniped \
-           --basic-auth >/dev/null 2>&1; then
+           --basic-auth 2>&1)
+    tanzu_exit_code=$?
+
+    if [ ${tanzu_exit_code} -eq 0 ]; then
         success "TMC context '${context_name}' created successfully"
         save_context_timestamp "${context_name}"
         if [[ "${environment}" == "prod" ]]; then
@@ -290,6 +297,12 @@ _setup_tmc_context() {
     else
         error "Failed to create TMC context '${context_name}'"
         error "Please verify your credentials and endpoint configuration"
+        if [[ -n "${tanzu_output}" ]]; then
+            echo ""
+            echo -e "${YELLOW}Tanzu CLI Error Output:${NC}"
+            echo "${tanzu_output}"
+            echo ""
+        fi
         return 1
     fi
 }

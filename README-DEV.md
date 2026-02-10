@@ -66,11 +66,8 @@ Captures comprehensive cluster state before and after changes. Runs 18 health ch
 # Single cluster health check
 ./k8s-health-check.sh --mode pre -c prod-workload-01
 
-# POST-change with comparison to latest PRE
+# POST-change with comparison to latest PRE (uses latest/ directory automatically)
 ./k8s-health-check.sh --mode post
-
-# POST with specific PRE results directory
-./k8s-health-check.sh --mode post ./clusters.conf ./health-check-results/pre-20260128_120000
 ```
 
 | Option | Description |
@@ -138,7 +135,7 @@ Executes commands across multiple clusters with parallel batch execution.
 ./k8s-ops-cmd.sh -m prod-1 "kubectl get nodes"
 
 # Check Kubernetes version across clusters
-./k8s-ops-cmd.sh "kubectl version --short 2>/dev/null | grep Server"
+./k8s-ops-cmd.sh "kubectl get nodes --no-headers | awk '{print $5}' | head -1"
 ```
 
 | Option | Description |

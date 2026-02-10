@@ -706,7 +706,8 @@ run_ops_command() {
 
     echo ""
     print_section "Results Saved"
-    echo -e "${CYAN}Per-cluster output:${NC} ${output_base_dir}/<cluster-name>/ops/ops-YYYYMMDD_HHMMSS.txt"
+    echo -e "${CYAN}Per-cluster output:${NC} ${output_base_dir}/<cluster-name>/ops/ops-${timestamp}.txt"
+    echo -e "  Example: ${output_base_dir}/prod-workload-01/ops/ops-${timestamp}.txt"
     echo -e "${CYAN}Aggregated output:${NC} ${aggregated_dir}/ops-${timestamp}.txt"
     echo ""
     display_banner "Ops Command Complete!"
