@@ -754,8 +754,9 @@ upgrade_single_cluster() {
     local available_versions
 
     available_versions=$(query_available_versions "${cluster_name}")
+    local query_exit=$?
 
-    if [[ $? -eq 0 ]] && [[ -n "${available_versions}" ]]; then
+    if [[ ${query_exit} -eq 0 ]] && [[ -n "${available_versions}" ]]; then
         # Versions available - prompt user to select
         target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
         local prompt_exit=$?
@@ -1134,8 +1135,9 @@ upgrade_clusters_parallel() {
             local available_versions
 
             available_versions=$(query_available_versions "${cluster_name}")
+            local query_exit=$?
 
-            if [[ $? -eq 0 ]] && [[ -n "${available_versions}" ]]; then
+            if [[ ${query_exit} -eq 0 ]] && [[ -n "${available_versions}" ]]; then
                 target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
                 local prompt_exit=$?
 
