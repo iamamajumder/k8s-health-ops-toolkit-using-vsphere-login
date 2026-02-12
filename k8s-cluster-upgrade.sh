@@ -260,15 +260,24 @@ get_upgrade_inputs() {
 ################################################################################
 query_available_versions() {
     local cluster_name="$1"
+    local mgmt_cluster="$2"
+    local provisioner="$3"
 
     debug "Querying available upgrade versions for ${cluster_name}..."
+    debug "  Management: ${mgmt_cluster}, Provisioner: ${provisioner}"
 
+    # Capture both stdout and stderr
     local tmc_output
-    tmc_output=$(tanzu tmc cluster upgrade available-version "${cluster_name}" 2>/dev/null)
+    tmc_output=$(tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" 2>&1)
     local cmd_exit=$?
+
+    debug "TMC command exit code: ${cmd_exit}"
+    debug "TMC command output: ${tmc_output}"
 
     if [[ ${cmd_exit} -ne 0 ]]; then
         warning "Failed to query available versions for ${cluster_name}"
+        # Show the actual error to help debug
+        echo "  TMC Error: ${tmc_output}" >&2
         return 1
     fi
 
@@ -278,6 +287,7 @@ query_available_versions() {
 
     if [[ -z "${versions}" ]]; then
         warning "No available versions found for ${cluster_name}"
+        debug "Raw TMC output: ${tmc_output}"
         return 1
     fi
 
@@ -755,7 +765,7 @@ upgrade_single_cluster() {
     local available_versions
 
     progress "Querying available upgrade versions from TMC..."
-    available_versions=$(query_available_versions "${cluster_name}")
+    available_versions=$(query_available_versions "${cluster_name}" "${mgmt_cluster}" "${provisioner}")
     local query_exit=$?
 
     debug "Query exit code: ${query_exit}"
@@ -1147,7 +1157,7 @@ upgrade_clusters_parallel() {
             local available_versions
 
             progress "Querying available upgrade versions from TMC..."
-            available_versions=$(query_available_versions "${cluster_name}")
+            available_versions=$(query_available_versions "${cluster_name}" "${mgmt_cluster}" "${provisioner}")
             local query_exit=$?
 
             debug "Query exit code: ${query_exit}, Available versions: '${available_versions}'"
