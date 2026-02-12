@@ -122,16 +122,18 @@ Captures comprehensive cluster state before and after changes. Runs 18 health ch
 
 ### 2. Cluster Upgrade (`k8s-cluster-upgrade.sh`)
 
-Orchestrates cluster upgrades with PRE/POST health checks and progress monitoring.
+Orchestrates cluster upgrades with PRE/POST health checks and progress monitoring. **v4.2+ includes interactive version selection** to choose specific Kubernetes versions before upgrade.
 
 ```bash
 # Default: Use ./clusters.conf (sequential)
+# You'll be prompted to select version for each cluster
 ./k8s-cluster-upgrade.sh
 
-# Single cluster upgrade
+# Single cluster upgrade with version selection
 ./k8s-cluster-upgrade.sh -c prod-workload-01
 
 # Parallel batch upgrades (6 at a time)
+# Version selection happens sequentially in Phase 1
 ./k8s-cluster-upgrade.sh --parallel
 
 # Parallel with custom batch size
@@ -148,6 +150,40 @@ Orchestrates cluster upgrades with PRE/POST health checks and progress monitorin
 | `--batch-size N` | Clusters per batch in parallel mode (default: 6) |
 | `--timeout-multiplier N` | Minutes per node for timeout (default: 5) |
 | `--dry-run` | Show what would be done without executing |
+
+#### Interactive Version Selection (v4.2+)
+
+Starting from v4.2, cluster upgrades support interactive version selection. Before upgrading, you'll see a list of all available Kubernetes versions for your cluster and can choose which version to upgrade to.
+
+**How it works:**
+1. After confirming the upgrade, available versions are queried from TMC
+2. Versions are displayed as a numbered list (newest first)
+3. Select a version number or choose option 0 for "latest"
+4. The upgrade proceeds to your selected version
+
+**Example:**
+```
+=== Upgrade Version Selection ===
+Cluster: prod-workload-01
+Current Version: v1.28.8+vmware.1
+
+Available upgrade versions:
+  0) Use latest available version
+  1) v1.30.14+vmware.1
+  2) v1.29.15+vmware.1
+  3) v1.29.14+vmware.1
+
+Select version number (0-3) or 'c' to cancel: 2
+
+Selected version: v1.29.15+vmware.1
+```
+
+**Features:**
+- Works in both sequential and parallel upgrade modes
+- Input validation with retry attempts (max 3)
+- Cancel at any time with 'c'
+- Graceful fallback to `--latest` if version query fails
+- Target version logged in upgrade logs for audit trail
 
 ---
 
@@ -466,6 +502,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 | Version | Highlights |
 |---------|------------|
+| **4.2** | Interactive version selection for cluster upgrades, query available versions from TMC, targeted upgrades |
 | **4.1** | vSphere login automation for Supervisor and Workload clusters, background process, dual credential system |
 | **3.8** | Codebase refactoring (~455 lines removed), shared functions, data-driven comparison |
 | **3.7** | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes |

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ################################################################################
-# Kubernetes Cluster Upgrade Script (v3.8)
+# Kubernetes Cluster Upgrade Script (v4.2)
 #
 # Simple orchestration script that delegates health checks to k8s-health-check.sh
 #
@@ -11,6 +11,13 @@
 #   - Monitors upgrade progress every 2 minutes
 #   - Dynamic timeout based on node count (nodes × 5 minutes per node)
 #   - Supports parallel batch upgrades (--parallel flag)
+#   - Interactive version selection for targeted upgrades (v4.2)
+#
+# v4.2 Features:
+#   - Interactive version selection: view and select specific K8s versions
+#   - Query available versions from TMC before upgrade
+#   - Graceful fallback to --latest if version query fails
+#   - Works in both sequential and parallel modes
 #
 # v3.8 Fixes:
 #   - Fixed POST health check skipped in parallel mode (proper logging)
@@ -28,7 +35,7 @@ set -euo pipefail
 
 # Script directory and version
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="3.8"
+VERSION="4.2"
 
 # Source library modules
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -249,6 +256,99 @@ get_upgrade_inputs() {
 }
 
 ################################################################################
+# Query Available Versions
+################################################################################
+query_available_versions() {
+    local cluster_name="$1"
+
+    debug "Querying available upgrade versions for ${cluster_name}..."
+
+    local tmc_output
+    tmc_output=$(tanzu tmc cluster upgrade available-version "${cluster_name}" 2>/dev/null)
+
+    if [[ $? -ne 0 ]]; then
+        warning "Failed to query available versions for ${cluster_name}"
+        return 1
+    fi
+
+    # Extract version strings (pattern: v1.29.1+vmware.1)
+    local versions
+    versions=$(echo "${tmc_output}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+\+vmware\.[0-9]+' | sort -V -r | uniq)
+
+    if [[ -z "${versions}" ]]; then
+        warning "No available versions found for ${cluster_name}"
+        return 1
+    fi
+
+    echo "${versions}"
+    return 0
+}
+
+################################################################################
+# Prompt Version Selection
+################################################################################
+prompt_version_selection() {
+    local cluster_name="$1"
+    local current_version="$2"
+    local available_versions="$3"  # newline-separated string
+
+    echo ""
+    echo -e "${BOLD}${CYAN}=== Upgrade Version Selection ===${NC}"
+    echo -e "Cluster: ${YELLOW}${cluster_name}${NC}"
+    echo -e "Current Version: ${GREEN}${current_version}${NC}"
+    echo ""
+    echo "Available upgrade versions:"
+
+    # Convert to array
+    local -a version_array
+    while IFS= read -r version; do
+        version_array+=("${version}")
+    done <<< "${available_versions}"
+
+    # Display numbered options
+    echo -e "  ${BOLD}0)${NC} Use latest available version"
+    for i in "${!version_array[@]}"; do
+        local num=$((i + 1))
+        echo -e "  ${BOLD}${num})${NC} ${version_array[$i]}"
+    done
+    echo ""
+
+    # Prompt with validation (max 3 attempts)
+    local attempts=0
+    while [[ $attempts -lt 3 ]]; do
+        echo -n "Select version number (0-${#version_array[@]}) or 'c' to cancel: "
+        read -r selection </dev/tty
+
+        # Handle cancellation
+        if [[ "${selection,,}" == "c" ]]; then
+            echo -e "${YELLOW}Version selection cancelled.${NC}"
+            return 2
+        fi
+
+        # Handle "latest" option
+        if [[ "${selection}" == "0" ]]; then
+            echo -e "${GREEN}Selected: Use latest available version${NC}"
+            echo "latest"
+            return 0
+        fi
+
+        # Validate numeric selection
+        if [[ "${selection}" =~ ^[0-9]+$ ]] && [[ ${selection} -ge 1 ]] && [[ ${selection} -le ${#version_array[@]} ]]; then
+            local selected_version="${version_array[$((selection - 1))]}"
+            echo -e "${GREEN}Selected version: ${selected_version}${NC}"
+            echo "${selected_version}"
+            return 0
+        fi
+
+        attempts=$((attempts + 1))
+        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${#version_array[@]}.${NC}"
+    done
+
+    echo -e "${RED}Too many invalid attempts. Cancelling upgrade for ${cluster_name}.${NC}"
+    return 2
+}
+
+################################################################################
 # Execute Upgrade
 ################################################################################
 execute_upgrade() {
@@ -256,8 +356,8 @@ execute_upgrade() {
     local mgmt_cluster="$2"
     local provisioner="$3"
     local output_dir="$4"
+    local target_version="${5:-latest}"  # NEW: defaults to "latest"
 
-    progress "Initiating upgrade for ${cluster_name}..."
     echo ""
 
     # Debug: Show exact values being used
@@ -265,10 +365,21 @@ execute_upgrade() {
     debug "  Cluster: '${cluster_name}'"
     debug "  Management: '${mgmt_cluster}'"
     debug "  Provisioner: '${provisioner}'"
+    debug "  Target Version: '${target_version}'"
 
     # Timestamped upgrade log filename
     local timestamp=$(get_timestamp)
     local upgrade_log="${output_dir}/upgrade-log-${timestamp}.txt"
+
+    # Build upgrade command based on target version
+    local upgrade_cmd
+    if [[ "${target_version}" == "latest" ]]; then
+        progress "Initiating upgrade to latest version..."
+        upgrade_cmd="tanzu tmc cluster upgrade \"${cluster_name}\" -m \"${mgmt_cluster}\" -p \"${provisioner}\" --latest"
+    else
+        progress "Initiating upgrade to version ${target_version}..."
+        upgrade_cmd="tanzu tmc cluster upgrade \"${cluster_name}\" -m \"${mgmt_cluster}\" -p \"${provisioner}\" \"${target_version}\""
+    fi
 
     # Log upgrade command
     {
@@ -278,7 +389,8 @@ execute_upgrade() {
         echo "Cluster: ${cluster_name}"
         echo "Management Cluster: ${mgmt_cluster}"
         echo "Provisioner: ${provisioner}"
-        echo "Command: tanzu tmc cluster upgrade ${cluster_name} -m ${mgmt_cluster} -p ${provisioner} --latest"
+        echo "Target Version: ${target_version}"
+        echo "Command: ${upgrade_cmd}"
         echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
         echo "==================================="
         echo ""
@@ -290,9 +402,9 @@ execute_upgrade() {
     fi
 
     # Execute upgrade with properly quoted parameters
-    debug "Executing: tanzu tmc cluster upgrade '${cluster_name}' -m '${mgmt_cluster}' -p '${provisioner}' --latest"
+    debug "Executing: ${upgrade_cmd}"
 
-    if tanzu tmc cluster upgrade "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" --latest 2>&1 | tee -a "${upgrade_log}"; then
+    if eval "${upgrade_cmd}" 2>&1 | tee -a "${upgrade_log}"; then
         success "Upgrade initiated successfully"
         return 0
     else
@@ -637,8 +749,34 @@ upgrade_single_cluster() {
     fi
     echo ""
 
+    # Step 4.5: Query available versions and prompt for selection
+    local target_version="latest"
+    local available_versions
+
+    available_versions=$(query_available_versions "${cluster_name}")
+
+    if [[ $? -eq 0 ]] && [[ -n "${available_versions}" ]]; then
+        # Versions available - prompt user to select
+        target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
+        local prompt_exit=$?
+
+        if [[ ${prompt_exit} -eq 2 ]]; then
+            # User cancelled version selection
+            warning "Upgrade cancelled by user during version selection for ${cluster_name}"
+            echo ""
+            echo -e "${YELLOW}Upgrade cancelled.${NC}"
+            echo ""
+            return 1
+        fi
+    else
+        # Fallback to latest if query fails
+        warning "Could not retrieve available versions, defaulting to --latest"
+        echo -e "${YELLOW}Unable to query available versions. Will use --latest option.${NC}"
+        echo ""
+    fi
+
     # Step 5: Execute upgrade
-    if ! execute_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${output_dir}"; then
+    if ! execute_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${output_dir}" "${target_version}"; then
         error "Failed to initiate upgrade for ${cluster_name}"
         echo "FAILED" > "${output_dir}/status.txt"
         return 1
@@ -808,7 +946,8 @@ monitor_and_post_upgrade() {
     local timeout_minutes="$4"
     local output_dir="$5"
     local pre_version="$6"
-    local results_file="$7"
+    local target_version="$7"
+    local results_file="$8"
 
     local start_time=$(date +%s)
     local status="SUCCESS"
@@ -871,6 +1010,7 @@ monitor_and_post_upgrade() {
         echo "CLUSTER:${cluster_name}"
         echo "STATUS:${status}"
         echo "PRE_VERSION:${pre_version}"
+        echo "TARGET_VERSION:${target_version}"
         echo "POST_VERSION:${post_version:-unknown}"
         echo "DURATION:${duration}"
         echo "===UPGRADE_END==="
@@ -942,6 +1082,7 @@ upgrade_clusters_parallel() {
         local -a confirmed_prov=()
         local -a confirmed_pre_ver=()
         local -a confirmed_output_dirs=()
+        local -a confirmed_versions=()
 
         for ((i=batch_start; i<batch_end; i++)); do
             local cluster_name="${clusters[$i]}"
@@ -988,11 +1129,35 @@ upgrade_clusters_parallel() {
                 pre_version=${pre_version:-unknown}
             fi
 
+            # Query available versions and prompt for selection
+            local target_version="latest"
+            local available_versions
+
+            available_versions=$(query_available_versions "${cluster_name}")
+
+            if [[ $? -eq 0 ]] && [[ -n "${available_versions}" ]]; then
+                target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
+                local prompt_exit=$?
+
+                if [[ ${prompt_exit} -eq 2 ]]; then
+                    # User cancelled - skip this cluster
+                    warning "Upgrade cancelled by user for ${cluster_name}"
+                    echo -e "${YELLOW}Skipping ${cluster_name}${NC}"
+                    echo ""
+                    continue  # Skip to next cluster in Phase 1
+                fi
+            else
+                warning "Could not retrieve available versions for ${cluster_name}, defaulting to --latest"
+                echo -e "${YELLOW}Unable to query available versions. Will use --latest option.${NC}"
+                echo ""
+            fi
+
             confirmed_clusters+=("${cluster_name}")
             confirmed_mgmt+=("${mgmt_cluster}")
             confirmed_prov+=("${provisioner}")
             confirmed_pre_ver+=("${pre_version}")
             confirmed_output_dirs+=("${output_dir}")
+            confirmed_versions+=("${target_version}")
         done
 
         if [ ${#confirmed_clusters[@]} -eq 0 ]; then
@@ -1012,9 +1177,10 @@ upgrade_clusters_parallel() {
             local mgmt_cluster="${confirmed_mgmt[$j]}"
             local provisioner="${confirmed_prov[$j]}"
             local output_dir="${confirmed_output_dirs[$j]}"
+            local target_version="${confirmed_versions[$j]}"
 
             echo -e "[INFO] Triggering upgrade: ${YELLOW}${cluster_name}${NC}"
-            if ! execute_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${output_dir}"; then
+            if ! execute_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${output_dir}" "${target_version}"; then
                 error "Failed to initiate upgrade for ${cluster_name}"
                 overall_failed=$((overall_failed + 1))
                 # Remove from confirmed list by marking status
@@ -1042,6 +1208,7 @@ upgrade_clusters_parallel() {
             local mgmt_cluster="${confirmed_mgmt[$j]}"
             local provisioner="${confirmed_prov[$j]}"
             local pre_version="${confirmed_pre_ver[$j]}"
+            local target_version="${confirmed_versions[$j]}"
             local output_dir="${confirmed_output_dirs[$j]}"
 
             # Calculate timeout
@@ -1051,7 +1218,7 @@ upgrade_clusters_parallel() {
             local cluster_rf=$(mktemp)
             cluster_result_files["${cluster_name}"]="${cluster_rf}"
 
-            monitor_and_post_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}" "${cluster_rf}" &
+            monitor_and_post_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${timeout_minutes}" "${output_dir}" "${pre_version}" "${target_version}" "${cluster_rf}" &
             pids["${cluster_name}"]=$!
         done
 
@@ -1094,22 +1261,22 @@ upgrade_clusters_parallel() {
         # Phase 5: Parse results and display batch summary
         while IFS= read -r line; do
             if [[ "${line}" == "===UPGRADE_START===" ]]; then
-                local r_cluster="" r_status="" r_pre="" r_post="" r_duration=""
+                local r_cluster="" r_status="" r_pre="" r_target="" r_post="" r_duration=""
                 continue
             fi
             if [[ "${line}" == "===UPGRADE_END===" ]]; then
                 # Display result
                 case "${r_status}" in
                     SUCCESS|SUCCESS_POST_FAILED)
-                        echo -e "${GREEN}[SUCCESS]${NC} ${r_cluster}: ${r_pre} → ${r_post} (${r_duration} min)"
+                        echo -e "${GREEN}[SUCCESS]${NC} ${r_cluster}: ${r_pre} → ${r_post} (target: ${r_target}, ${r_duration} min)"
                         overall_success=$((overall_success + 1))
                         ;;
                     FAILED)
-                        echo -e "${RED}[FAILED]${NC} ${r_cluster}"
+                        echo -e "${RED}[FAILED]${NC} ${r_cluster} (target: ${r_target})"
                         overall_failed=$((overall_failed + 1))
                         ;;
                     TIMEOUT)
-                        echo -e "${YELLOW}[TIMEOUT]${NC} ${r_cluster} (after ${r_duration} min)"
+                        echo -e "${YELLOW}[TIMEOUT]${NC} ${r_cluster} (target: ${r_target}, after ${r_duration} min)"
                         overall_timeout=$((overall_timeout + 1))
                         ;;
                 esac
@@ -1122,6 +1289,7 @@ upgrade_clusters_parallel() {
                 CLUSTER) r_cluster="${value}" ;;
                 STATUS) r_status="${value}" ;;
                 PRE_VERSION) r_pre="${value}" ;;
+                TARGET_VERSION) r_target="${value}" ;;
                 POST_VERSION) r_post="${value}" ;;
                 DURATION) r_duration="${value}" ;;
             esac

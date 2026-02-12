@@ -1,5 +1,121 @@
 # Release Notes
 
+## [4.2] - 2026-02-12
+
+### New Features ✨
+
+#### Interactive Version Selection for Cluster Upgrades
+- **Interactive Version Menu**: Users can now view and select specific Kubernetes versions during cluster upgrades instead of always defaulting to latest
+- **TMC Version Query**: Queries available upgrade versions from TMC using `tanzu tmc cluster upgrade available-version CLUSTER_NAME`
+- **User-Friendly Display**: Versions shown as numbered menu (newest first) with current version highlighted
+- **Selection Options**:
+  - Select specific version number (1-N)
+  - Choose option 0 for "latest" (traditional behavior)
+  - Cancel at any time with 'c'
+- **Input Validation**: Retry logic with max 3 attempts for invalid inputs
+- **Graceful Fallback**: Automatically falls back to `--latest` if version query fails (network issues, TMC unavailable)
+- **Audit Trail**: Target version logged in upgrade logs for compliance and troubleshooting
+
+### How It Works 🔄
+
+**Sequential Mode:**
+1. PRE health check runs
+2. User confirms upgrade (Y/N)
+3. **NEW**: Available versions queried and displayed
+4. **NEW**: User selects target version
+5. Upgrade executes to selected version
+6. Monitoring and POST health check proceed as usual
+
+**Parallel Mode:**
+1. **Phase 1 (Sequential)**: PRE health checks + upgrade confirmation + **version selection** for each cluster
+2. **Phase 2 (Parallel)**: Upgrades execute in parallel batches using selected versions
+3. **Phase 3-5**: Monitoring and POST health checks proceed
+
+### Usage Examples 💡
+
+```bash
+# Single cluster upgrade with version selection
+./k8s-cluster-upgrade.sh -c prod-workload-01
+
+# Sequential mode - select version for each cluster
+./k8s-cluster-upgrade.sh
+
+# Parallel mode - version selection in Phase 1, upgrades in Phase 2
+./k8s-cluster-upgrade.sh --parallel --batch-size 3
+```
+
+**Example Interactive Prompt:**
+```
+=== Upgrade Version Selection ===
+Cluster: prod-workload-01
+Current Version: v1.28.8+vmware.1
+
+Available upgrade versions:
+  0) Use latest available version
+  1) v1.30.14+vmware.1
+  2) v1.29.15+vmware.1
+  3) v1.29.14+vmware.1
+
+Select version number (0-3) or 'c' to cancel: 2
+
+Selected version: v1.29.15+vmware.1
+```
+
+### Technical Details 🔧
+
+**New Functions in `k8s-cluster-upgrade.sh`:**
+- `query_available_versions()` - Queries TMC for available versions, returns sorted list (newest first)
+- `prompt_version_selection()` - Displays interactive menu and handles user input with validation
+
+**Modified Functions:**
+- `execute_upgrade()` - Now accepts optional 5th parameter `target_version` (defaults to "latest" for backward compatibility)
+  - Uses `--latest` flag if target_version is "latest"
+  - Uses specific version string if target_version is a version number
+- `monitor_and_post_upgrade()` - Added `target_version` parameter for logging in parallel mode
+
+**Enhanced Logging:**
+- Upgrade logs now include "Target Version" field
+- Parallel mode results display target version in summary (e.g., `[SUCCESS] cluster: v1.28.8 → v1.29.15 (target: v1.29.15, 12 min)`)
+
+### Backward Compatibility ✅
+
+- **Fully backward compatible**: Default parameter ensures existing automation continues to work
+- **No breaking changes**: All existing command-line arguments and workflows preserved
+- **Graceful degradation**: Falls back to `--latest` if version query fails
+
+### Error Handling 🛡️
+
+| Scenario | Behavior |
+|----------|----------|
+| TMC query fails | Warning logged, fallback to `--latest`, upgrade continues |
+| No versions returned | Warning logged, fallback to `--latest`, upgrade continues |
+| User cancels selection | Upgrade aborted for that cluster (exit code 1 in sequential, skip in parallel) |
+| Invalid version selected by user | Retry with max 3 attempts, then abort if still invalid |
+| Network timeout during query | Caught as query failure, fallback to `--latest` |
+
+### Files Modified 📝
+
+- **Modified**: `k8s-cluster-upgrade.sh` (~100 lines added)
+  - Added `query_available_versions()` function (line ~250)
+  - Added `prompt_version_selection()` function (line ~290)
+  - Modified `execute_upgrade()` to accept target_version parameter (line ~350)
+  - Integrated version selection in sequential mode (line ~730)
+  - Integrated version selection in parallel mode Phase 1 (line ~1040)
+  - Enhanced logging in `monitor_and_post_upgrade()` (line ~900)
+- **Updated**: `CLAUDE.md` (added version selection examples)
+- **Updated**: `README.md` (added "Interactive Version Selection" section)
+
+### Testing Verified ✅
+
+- ✅ Sequential mode with version selection
+- ✅ Parallel mode with version selection
+- ✅ Cancellation handling (user presses 'c')
+- ✅ Fallback to --latest on query failure
+- ✅ Backward compatibility (existing scripts work unchanged)
+- ✅ Input validation with retry logic
+
+---
+
 ## [4.1] - 2026-02-07
 
 ### New Features ✨

@@ -244,6 +244,50 @@ Collect Metrics (Nodes, Pods, Workloads, Storage, Helm)
 | **WARNINGS** | Pods Pending > 0 OR Pods Unaccounted > 0 OR Deployments NotReady > 0 OR DaemonSets NotReady > 0 OR StatefulSets NotReady > 0 OR PVCs NotBound > 0 OR Helm Failed > 0 | Prompt user, proceed with caution |
 | **HEALTHY** | None of the above | Auto-proceed |
 
+### Version Selection Architecture (v4.2)
+
+**New Functions:**
+- `query_available_versions(cluster_name)`: Queries TMC for available versions, returns sorted list (newest first)
+- `prompt_version_selection(cluster_name, current_version, available_versions)`: Displays interactive menu and prompts for selection with validation
+
+**Integration Points:**
+
+**Sequential Mode:**
+- Version selection happens after metadata discovery, before upgrade execution
+- Flow: PRE health check → User confirms upgrade → **Version selection** → Execute upgrade → Monitor → POST health check
+
+**Parallel Mode:**
+- Version selection in Phase 1 (sequential prompts)
+- Versions stored in `confirmed_versions[]` array
+- Used in Phase 2 (parallel execution)
+- Flow:
+  1. **Phase 1 (Sequential)**: PRE health checks + upgrade confirmation + **version selection** for each cluster
+  2. **Phase 2 (Parallel)**: Execute upgrades using selected versions from array
+  3. **Phase 3-5**: Monitor all clusters, run POST health checks
+
+**Command Changes:**
+```bash
+# Before:
+tanzu tmc cluster upgrade CLUSTER -m MGMT -p PROV --latest
+
+# After (with specific version selected):
+tanzu tmc cluster upgrade CLUSTER -m MGMT -p PROV v1.29.1+vmware.1
+
+# After (if user selects "latest"):
+tanzu tmc cluster upgrade CLUSTER -m MGMT -p PROV --latest
+```
+
+**Error Handling:**
+- TMC query failure → falls back to `--latest`
+- User cancellation → aborts upgrade for that cluster (exit code 2)
+- Invalid version input → retry with max 3 attempts, then abort
+- Network timeout → caught as query failure, fallback to `--latest`
+
+**Backward Compatibility:**
+- `execute_upgrade()` function accepts optional 5th parameter `target_version` with default value "latest"
+- Existing calls without 5th parameter continue to work unchanged
+- No breaking changes to command-line arguments or workflows
+
 ---
 
 ## 4. Configuration
