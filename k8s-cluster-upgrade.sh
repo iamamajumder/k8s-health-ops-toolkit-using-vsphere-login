@@ -270,7 +270,8 @@ query_available_versions() {
     local temp_output=$(mktemp)
 
     # Run TMC command with timeout (30 seconds), output to file
-    timeout 30s tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" > "${temp_output}" 2>&1
+    # Redirect stdin from /dev/null to prevent tanzu CLI from blocking on interactive prompts
+    timeout 30s tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" < /dev/null > "${temp_output}" 2>&1
     local cmd_exit=$?
 
     debug "TMC command exit code: ${cmd_exit}"
