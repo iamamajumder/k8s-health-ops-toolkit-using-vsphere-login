@@ -262,54 +262,60 @@ query_available_versions() {
     local cluster_name="$1"
     local mgmt_cluster="$2"
     local provisioner="$3"
+    local result_file="$4"  # Caller passes a temp file to write versions into
 
-    debug "Querying available upgrade versions for ${cluster_name}..."
-    debug "  Management: ${mgmt_cluster}, Provisioner: ${provisioner}"
+    echo "  [TRACE] Entering query_available_versions()" >&2
+    echo "  [TRACE] Cluster: ${cluster_name}, Mgmt: ${mgmt_cluster}, Prov: ${provisioner}" >&2
 
-    # Use temp file to avoid command substitution issues
+    # Use temp file for TMC output
     local temp_output=$(mktemp)
+    echo "  [TRACE] Created temp file: ${temp_output}" >&2
 
-    # Run TMC command with timeout (30 seconds), output to file
-    # Redirect stdin from /dev/null to prevent tanzu CLI from blocking on interactive prompts
+    # Build the command
+    local cmd="tanzu tmc cluster upgrade available-version ${cluster_name} -m ${mgmt_cluster} -p ${provisioner}"
+    echo "  [TRACE] Running: ${cmd}" >&2
+
+    # Run TMC command with timeout, stdin from /dev/null
     timeout 30s tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" < /dev/null > "${temp_output}" 2>&1
     local cmd_exit=$?
 
-    debug "TMC command exit code: ${cmd_exit}"
+    echo "  [TRACE] TMC exit code: ${cmd_exit}" >&2
 
     if [[ ${cmd_exit} -eq 124 ]]; then
+        echo "  [TRACE] Command timed out" >&2
         warning "TMC query timed out after 30 seconds for ${cluster_name}"
         rm -f "${temp_output}"
         return 1
     fi
 
     if [[ ${cmd_exit} -ne 0 ]]; then
+        echo "  [TRACE] Command failed, output:" >&2
+        cat "${temp_output}" >&2
         warning "Failed to query available versions for ${cluster_name}"
-        # Show the actual error to help debug
-        if [[ -f "${temp_output}" ]]; then
-            echo "  TMC Error: $(cat "${temp_output}")" >&2
-            debug "Full TMC output: $(cat "${temp_output}")"
-        fi
         rm -f "${temp_output}"
         return 1
     fi
 
-    debug "TMC command succeeded, parsing output..."
+    echo "  [TRACE] Command succeeded, parsing versions..." >&2
 
-    # Extract version strings - simpler approach
+    # Extract version strings
     # Look for lines starting with v and containing +vmware
-    local versions
-    versions=$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\+vmware' "${temp_output}" | cut -d':' -f1 | sort -V -r | uniq)
+    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\+vmware' "${temp_output}" | cut -d':' -f1 | sort -V -r | uniq > "${result_file}"
+    local grep_exit=$?
 
-    debug "Parsed versions: ${versions}"
+    echo "  [TRACE] grep exit code: ${grep_exit}" >&2
+    echo "  [TRACE] Parsed versions:" >&2
+    cat "${result_file}" >&2
 
     rm -f "${temp_output}"
 
-    if [[ -z "${versions}" ]]; then
+    if [[ ! -s "${result_file}" ]]; then
+        echo "  [TRACE] No versions found in output" >&2
         warning "No available versions found for ${cluster_name}"
         return 1
     fi
 
-    echo "${versions}"
+    echo "  [TRACE] query_available_versions() completed successfully" >&2
     return 0
 }
 
@@ -780,26 +786,25 @@ upgrade_single_cluster() {
 
     # Step 4.5: Query available versions and prompt for selection
     local target_version="latest"
-    local available_versions
+    local versions_file=$(mktemp)
 
     progress "Querying available upgrade versions from TMC..."
-    available_versions=$(query_available_versions "${cluster_name}" "${mgmt_cluster}" "${provisioner}")
+
+    # Call directly (no command substitution) — write versions to temp file
+    query_available_versions "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${versions_file}"
     local query_exit=$?
 
-    debug "Query exit code: ${query_exit}"
-    debug "Available versions output: '${available_versions}'"
+    if [[ ${query_exit} -eq 0 ]] && [[ -s "${versions_file}" ]]; then
+        local available_versions
+        available_versions=$(cat "${versions_file}")
 
-    if [[ ${query_exit} -eq 0 ]] && [[ -n "${available_versions}" ]]; then
         # Versions available - prompt user to select
-        debug "Version query succeeded, prompting for selection"
         target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
         local prompt_exit=$?
 
-        debug "Prompt exit code: ${prompt_exit}"
-        debug "Selected target version: '${target_version}'"
-
         if [[ ${prompt_exit} -eq 2 ]]; then
             # User cancelled version selection
+            rm -f "${versions_file}"
             warning "Upgrade cancelled by user during version selection for ${cluster_name}"
             echo ""
             echo -e "${YELLOW}Upgrade cancelled.${NC}"
@@ -813,7 +818,8 @@ upgrade_single_cluster() {
         echo ""
     fi
 
-    success "Target version selected: ${target_version}"
+    rm -f "${versions_file}"
+    success "Target version: ${target_version}"
     echo ""
 
     # Step 5: Execute upgrade
@@ -1172,22 +1178,24 @@ upgrade_clusters_parallel() {
 
             # Query available versions and prompt for selection
             local target_version="latest"
-            local available_versions
+            local versions_file=$(mktemp)
 
             progress "Querying available upgrade versions from TMC..."
-            available_versions=$(query_available_versions "${cluster_name}" "${mgmt_cluster}" "${provisioner}")
+
+            # Call directly (no command substitution) — write versions to temp file
+            query_available_versions "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${versions_file}"
             local query_exit=$?
 
-            debug "Query exit code: ${query_exit}, Available versions: '${available_versions}'"
+            if [[ ${query_exit} -eq 0 ]] && [[ -s "${versions_file}" ]]; then
+                local available_versions
+                available_versions=$(cat "${versions_file}")
 
-            if [[ ${query_exit} -eq 0 ]] && [[ -n "${available_versions}" ]]; then
                 target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
                 local prompt_exit=$?
 
-                debug "Prompt exit code: ${prompt_exit}, Selected: '${target_version}'"
-
                 if [[ ${prompt_exit} -eq 2 ]]; then
                     # User cancelled - skip this cluster
+                    rm -f "${versions_file}"
                     warning "Upgrade cancelled by user for ${cluster_name}"
                     echo -e "${YELLOW}Skipping ${cluster_name}${NC}"
                     echo ""
@@ -1199,6 +1207,7 @@ upgrade_clusters_parallel() {
                 echo ""
             fi
 
+            rm -f "${versions_file}"
             success "Target version for ${cluster_name}: ${target_version}"
             echo ""
 
