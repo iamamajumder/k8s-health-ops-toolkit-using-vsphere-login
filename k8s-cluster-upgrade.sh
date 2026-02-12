@@ -265,8 +265,9 @@ query_available_versions() {
 
     local tmc_output
     tmc_output=$(tanzu tmc cluster upgrade available-version "${cluster_name}" 2>/dev/null)
+    local cmd_exit=$?
 
-    if [[ $? -ne 0 ]]; then
+    if [[ ${cmd_exit} -ne 0 ]]; then
         warning "Failed to query available versions for ${cluster_name}"
         return 1
     fi
@@ -753,13 +754,21 @@ upgrade_single_cluster() {
     local target_version="latest"
     local available_versions
 
+    progress "Querying available upgrade versions from TMC..."
     available_versions=$(query_available_versions "${cluster_name}")
     local query_exit=$?
 
+    debug "Query exit code: ${query_exit}"
+    debug "Available versions output: '${available_versions}'"
+
     if [[ ${query_exit} -eq 0 ]] && [[ -n "${available_versions}" ]]; then
         # Versions available - prompt user to select
+        debug "Version query succeeded, prompting for selection"
         target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
         local prompt_exit=$?
+
+        debug "Prompt exit code: ${prompt_exit}"
+        debug "Selected target version: '${target_version}'"
 
         if [[ ${prompt_exit} -eq 2 ]]; then
             # User cancelled version selection
@@ -775,6 +784,9 @@ upgrade_single_cluster() {
         echo -e "${YELLOW}Unable to query available versions. Will use --latest option.${NC}"
         echo ""
     fi
+
+    success "Target version selected: ${target_version}"
+    echo ""
 
     # Step 5: Execute upgrade
     if ! execute_upgrade "${cluster_name}" "${mgmt_cluster}" "${provisioner}" "${output_dir}" "${target_version}"; then
@@ -1134,12 +1146,17 @@ upgrade_clusters_parallel() {
             local target_version="latest"
             local available_versions
 
+            progress "Querying available upgrade versions from TMC..."
             available_versions=$(query_available_versions "${cluster_name}")
             local query_exit=$?
+
+            debug "Query exit code: ${query_exit}, Available versions: '${available_versions}'"
 
             if [[ ${query_exit} -eq 0 ]] && [[ -n "${available_versions}" ]]; then
                 target_version=$(prompt_version_selection "${cluster_name}" "${pre_version}" "${available_versions}")
                 local prompt_exit=$?
+
+                debug "Prompt exit code: ${prompt_exit}, Selected: '${target_version}'"
 
                 if [[ ${prompt_exit} -eq 2 ]]; then
                     # User cancelled - skip this cluster
@@ -1153,6 +1170,9 @@ upgrade_clusters_parallel() {
                 echo -e "${YELLOW}Unable to query available versions. Will use --latest option.${NC}"
                 echo ""
             fi
+
+            success "Target version for ${cluster_name}: ${target_version}"
+            echo ""
 
             confirmed_clusters+=("${cluster_name}")
             confirmed_mgmt+=("${mgmt_cluster}")
