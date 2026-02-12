@@ -266,24 +266,34 @@ query_available_versions() {
     debug "Querying available upgrade versions for ${cluster_name}..."
     debug "  Management: ${mgmt_cluster}, Provisioner: ${provisioner}"
 
-    # Capture both stdout and stderr
+    # Run TMC command with timeout (30 seconds)
     local tmc_output
-    tmc_output=$(tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" 2>&1)
+    tmc_output=$(timeout 30s tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" 2>&1)
     local cmd_exit=$?
 
     debug "TMC command exit code: ${cmd_exit}"
-    debug "TMC command output: ${tmc_output}"
+
+    if [[ ${cmd_exit} -eq 124 ]]; then
+        warning "TMC query timed out after 30 seconds for ${cluster_name}"
+        return 1
+    fi
 
     if [[ ${cmd_exit} -ne 0 ]]; then
         warning "Failed to query available versions for ${cluster_name}"
         # Show the actual error to help debug
         echo "  TMC Error: ${tmc_output}" >&2
+        debug "Full TMC output: ${tmc_output}"
         return 1
     fi
 
-    # Extract version strings (pattern: v1.29.1+vmware.1)
+    debug "TMC command succeeded, parsing output..."
+
+    # Extract version strings (pattern: v1.30.14+vmware.1-fips-vkr.3:)
+    # Match the full version string including -fips suffix and trailing colon
     local versions
-    versions=$(echo "${tmc_output}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+\+vmware\.[0-9]+' | sort -V -r | uniq)
+    versions=$(echo "${tmc_output}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+\+vmware\.[0-9]+[^:]*' | sed 's/:$//' | sort -V -r | uniq)
+
+    debug "Parsed versions: ${versions}"
 
     if [[ -z "${versions}" ]]; then
         warning "No available versions found for ${cluster_name}"
