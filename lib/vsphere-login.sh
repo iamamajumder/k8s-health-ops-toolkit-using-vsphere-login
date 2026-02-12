@@ -119,15 +119,25 @@ vsphere_supervisor_login() {
 
     debug "[vSphere Login] Logging in to Supervisor ${suffix}..."
 
+    local error_output
+    error_output=$(mktemp)
+
     if kubectl vsphere login \
         --server "${supervisor_ip}" \
         --username "${username}" \
         --password "${password}" \
-        --insecure-skip-tls-verify >/dev/null 2>&1; then
+        --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
         echo -e "${GREEN}[vSphere Login]${NC} Success login to Supervisor ${suffix}"
+        rm -f "${error_output}"
         return 0
     else
-        echo -e "${RED}[vSphere Login]${NC} Failed login to Supervisor ${suffix}"
+        local error_msg=$(cat "${error_output}" | head -n 1)
+        if [[ -n "${error_msg}" ]]; then
+            echo -e "${RED}[vSphere Login]${NC} Failed login to Supervisor ${suffix}: ${error_msg}"
+        else
+            echo -e "${RED}[vSphere Login]${NC} Failed login to Supervisor ${suffix}"
+        fi
+        rm -f "${error_output}"
         return 1
     fi
 }
@@ -150,9 +160,18 @@ vsphere_workload_login() {
     else
         username="${VSPHERE_NONPROD_USERNAME}"
         password="${VSPHERE_NONPROD_PASSWORD}"
+
+        # Check if non-prod credentials are available
+        if [[ -z "${username}" ]] || [[ -z "${password}" ]]; then
+            debug "[vSphere Login] Non-Prod credentials not available for ${cluster_name}, skipping"
+            return 1
+        fi
     fi
 
-    debug "[vSphere Login] Logging in to Workload cluster ${cluster_name}..."
+    debug "[vSphere Login] Logging in to Workload cluster ${cluster_name} (${environment})..."
+
+    local error_output
+    error_output=$(mktemp)
 
     if kubectl vsphere login \
         --server "${supervisor_ip}" \
@@ -160,11 +179,18 @@ vsphere_workload_login() {
         --password "${password}" \
         --tanzu-kubernetes-cluster-name "${cluster_name}" \
         --tanzu-kubernetes-cluster-namespace "${provisioner}" \
-        --insecure-skip-tls-verify >/dev/null 2>&1; then
+        --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
         echo -e "${GREEN}[vSphere Login]${NC} Success login to ${cluster_name}"
+        rm -f "${error_output}"
         return 0
     else
-        echo -e "${RED}[vSphere Login]${NC} Failed login to ${cluster_name}"
+        local error_msg=$(cat "${error_output}" | head -n 1)
+        if [[ -n "${error_msg}" ]]; then
+            echo -e "${RED}[vSphere Login]${NC} Failed login to ${cluster_name}: ${error_msg}"
+        else
+            echo -e "${RED}[vSphere Login]${NC} Failed login to ${cluster_name}"
+        fi
+        rm -f "${error_output}"
         return 1
     fi
 }
@@ -251,10 +277,31 @@ start_vsphere_login_background() {
         return 0
     fi
 
-    # Ensure TMC credentials are available (should already be prompted)
+    # Ensure TMC credentials are available
+    # Try to get from environment first, then from tanzu CLI context
     if [[ -z "${TMC_SELF_MANAGED_USERNAME:-}" ]] || [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
-        warning "[vSphere Login] TMC credentials not available, skipping"
-        return 0
+        # Check if we can extract from current tanzu context
+        local current_context=$(tanzu context current 2>/dev/null | grep -oP 'Name:\s+\K.*' || true)
+        if [[ -z "${current_context}" ]]; then
+            warning "[vSphere Login] TMC credentials not available in environment"
+            echo -e "${YELLOW}Tip:${NC} To enable vSphere login on subsequent runs, export credentials:"
+            echo "  export TMC_SELF_MANAGED_USERNAME='your-username'"
+            echo "  export TMC_SELF_MANAGED_PASSWORD='your-password'"
+            echo ""
+            return 0
+        fi
+
+        # Extract username from tanzu context (if available)
+        TMC_SELF_MANAGED_USERNAME=$(tanzu context get "${current_context}" 2>/dev/null | grep -oP 'Username:\s+\K.*' || true)
+
+        if [[ -z "${TMC_SELF_MANAGED_USERNAME}" ]] || [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
+            warning "[vSphere Login] TMC credentials not fully available"
+            echo -e "${YELLOW}Tip:${NC} To enable vSphere login on subsequent runs, export credentials:"
+            echo "  export TMC_SELF_MANAGED_USERNAME='your-username'"
+            echo "  export TMC_SELF_MANAGED_PASSWORD='your-password'"
+            echo ""
+            return 0
+        fi
     fi
 
     # Check if any non-prod clusters exist in the list
@@ -279,7 +326,19 @@ start_vsphere_login_background() {
 
     # Start background login process
     progress "[vSphere Login] Starting background login process..."
+    echo ""
+
+    # Store PID for optional waiting
     vsphere_login_all "${cluster_list}" &
+    export VSPHERE_LOGIN_PID=$!
+
+    # If VSPHERE_LOGIN_WAIT is set, wait for completion (useful for debugging)
+    if [[ "${VSPHERE_LOGIN_WAIT:-false}" == "true" ]]; then
+        progress "[vSphere Login] Waiting for login to complete..."
+        wait ${VSPHERE_LOGIN_PID}
+        progress "[vSphere Login] Login process completed"
+        echo ""
+    fi
 
     return 0
 }
