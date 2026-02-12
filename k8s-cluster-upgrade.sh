@@ -264,58 +264,40 @@ query_available_versions() {
     local provisioner="$3"
     local result_file="$4"  # Caller passes a temp file to write versions into
 
-    echo "  [TRACE] Entering query_available_versions()" >&2
-    echo "  [TRACE] Cluster: ${cluster_name}, Mgmt: ${mgmt_cluster}, Prov: ${provisioner}" >&2
+    debug "  Cluster: ${cluster_name}, Mgmt: ${mgmt_cluster}, Prov: ${provisioner}"
 
     # Use temp file for TMC output
     local temp_output=$(mktemp)
-    echo "  [TRACE] Created temp file: ${temp_output}" >&2
-
-    # Build the command
-    local cmd="tanzu tmc cluster upgrade available-version ${cluster_name} -m ${mgmt_cluster} -p ${provisioner}"
-    echo "  [TRACE] Running: ${cmd}" >&2
 
     # Run TMC command with timeout, stdin from /dev/null
     timeout 30s tanzu tmc cluster upgrade available-version "${cluster_name}" -m "${mgmt_cluster}" -p "${provisioner}" < /dev/null > "${temp_output}" 2>&1
     local cmd_exit=$?
 
-    echo "  [TRACE] TMC exit code: ${cmd_exit}" >&2
+    debug "TMC command exit code: ${cmd_exit}"
 
     if [[ ${cmd_exit} -eq 124 ]]; then
-        echo "  [TRACE] Command timed out" >&2
         warning "TMC query timed out after 30 seconds for ${cluster_name}"
         rm -f "${temp_output}"
         return 1
     fi
 
     if [[ ${cmd_exit} -ne 0 ]]; then
-        echo "  [TRACE] Command failed, output:" >&2
-        cat "${temp_output}" >&2
         warning "Failed to query available versions for ${cluster_name}"
+        debug "TMC output: $(cat "${temp_output}")"
         rm -f "${temp_output}"
         return 1
     fi
 
-    echo "  [TRACE] Command succeeded, parsing versions..." >&2
-
     # Extract version strings
     # Look for lines starting with v and containing +vmware
     grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\+vmware' "${temp_output}" | cut -d':' -f1 | sort -V -r | uniq > "${result_file}"
-    local grep_exit=$?
-
-    echo "  [TRACE] grep exit code: ${grep_exit}" >&2
-    echo "  [TRACE] Parsed versions:" >&2
-    cat "${result_file}" >&2
 
     rm -f "${temp_output}"
 
     if [[ ! -s "${result_file}" ]]; then
-        echo "  [TRACE] No versions found in output" >&2
         warning "No available versions found for ${cluster_name}"
         return 1
     fi
-
-    echo "  [TRACE] query_available_versions() completed successfully" >&2
     return 0
 }
 
@@ -327,12 +309,13 @@ prompt_version_selection() {
     local current_version="$2"
     local available_versions="$3"  # newline-separated string
 
-    echo ""
-    echo -e "${BOLD}${CYAN}=== Upgrade Version Selection ===${NC}"
-    echo -e "Cluster: ${YELLOW}${cluster_name}${NC}"
-    echo -e "Current Version: ${GREEN}${current_version}${NC}"
-    echo ""
-    echo "Available upgrade versions:"
+    # All display output goes to stderr so it's visible even inside $(...)
+    echo "" >&2
+    echo -e "${BOLD}${CYAN}=== Upgrade Version Selection ===${NC}" >&2
+    echo -e "Cluster: ${YELLOW}${cluster_name}${NC}" >&2
+    echo -e "Current Version: ${GREEN}${current_version}${NC}" >&2
+    echo "" >&2
+    echo "Available upgrade versions:" >&2
 
     # Convert to array
     local -a version_array
@@ -341,45 +324,45 @@ prompt_version_selection() {
     done <<< "${available_versions}"
 
     # Display numbered options
-    echo -e "  ${BOLD}0)${NC} Use latest available version"
+    echo -e "  ${BOLD}0)${NC} Use latest available version" >&2
     for i in "${!version_array[@]}"; do
         local num=$((i + 1))
-        echo -e "  ${BOLD}${num})${NC} ${version_array[$i]}"
+        echo -e "  ${BOLD}${num})${NC} ${version_array[$i]}" >&2
     done
-    echo ""
+    echo "" >&2
 
     # Prompt with validation (max 3 attempts)
     local attempts=0
     while [[ $attempts -lt 3 ]]; do
-        echo -n "Select version number (0-${#version_array[@]}) or 'c' to cancel: "
+        echo -n "Select version number (0-${#version_array[@]}) or 'c' to cancel: " >&2
         read -r selection </dev/tty
 
         # Handle cancellation
         if [[ "${selection,,}" == "c" ]]; then
-            echo -e "${YELLOW}Version selection cancelled.${NC}"
+            echo -e "${YELLOW}Version selection cancelled.${NC}" >&2
             return 2
         fi
 
         # Handle "latest" option
         if [[ "${selection}" == "0" ]]; then
-            echo -e "${GREEN}Selected: Use latest available version${NC}"
-            echo "latest"
+            echo -e "${GREEN}Selected: Use latest available version${NC}" >&2
+            echo "latest"  # Only this goes to stdout (captured by caller)
             return 0
         fi
 
         # Validate numeric selection
         if [[ "${selection}" =~ ^[0-9]+$ ]] && [[ ${selection} -ge 1 ]] && [[ ${selection} -le ${#version_array[@]} ]]; then
             local selected_version="${version_array[$((selection - 1))]}"
-            echo -e "${GREEN}Selected version: ${selected_version}${NC}"
-            echo "${selected_version}"
+            echo -e "${GREEN}Selected version: ${selected_version}${NC}" >&2
+            echo "${selected_version}"  # Only this goes to stdout (captured by caller)
             return 0
         fi
 
         attempts=$((attempts + 1))
-        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${#version_array[@]}.${NC}"
+        echo -e "${RED}Invalid selection. Please enter a number between 0 and ${#version_array[@]}.${NC}" >&2
     done
 
-    echo -e "${RED}Too many invalid attempts. Cancelling upgrade for ${cluster_name}.${NC}"
+    echo -e "${RED}Too many invalid attempts. Cancelling upgrade for ${cluster_name}.${NC}" >&2
     return 2
 }
 
