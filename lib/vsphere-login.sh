@@ -19,14 +19,14 @@ fi
 #===============================================================================
 # User must update these with actual Supervisor cluster IPs or FQDNs
 declare -A SUPERVISOR_IP_MAP=(
-    ["prod-1"]="<supervisor-prod-1-ip-or-fqdn>"
-    ["prod-2"]="<supervisor-prod-2-ip-or-fqdn>"
-    ["prod-3"]="<supervisor-prod-3-ip-or-fqdn>"
-    ["prod-4"]="<supervisor-prod-4-ip-or-fqdn>"
-    ["system-1"]="<supervisor-system-1-ip-or-fqdn>"
-    ["system-3"]="<supervisor-system-3-ip-or-fqdn>"
-    ["uat-2"]="<supervisor-uat-2-ip-or-fqdn>"
-    ["uat-4"]="<supervisor-uat-4-ip-or-fqdn>"
+    ["prod-1"]="supvr-w11c1-prod-1.k8s.ntrs.com"
+    ["prod-2"]="supvr-w11c1-prod-2.k8s.ntrs.com"
+    ["prod-3"]="supvr-w11c2-prod-3.k8s.ntrs.com"
+    ["prod-4"]="supvr-w11c2-prod-4.k8s.ntrs.com"
+    ["system-1"]="supvr-w10c1-system-1.k8s.ntrs.com"
+    ["system-3"]="supvr-w10c2-system-3.k8s.ntrs.com"
+    ["uat-2"]="supvr-w10c1-uat-2.k8s.ntrs.com"
+    ["uat-4"]="supvr-w10c2-uat-4.k8s.ntrs.com"
 )
 
 #===============================================================================
