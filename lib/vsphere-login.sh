@@ -152,15 +152,15 @@ vsphere_supervisor_login() {
     local password="$4"
 
     info "[vSphere]   Supervisor login: ${suffix} (server=${supervisor_ip}, user=${username})"
-    info "[vSphere]   Running: kubectl vsphere login --server ${supervisor_ip} --username ${username} --insecure-skip-tls-verify"
+    info "[vSphere]   Running: kubectl vsphere login --server ${supervisor_ip} --vsphere-username ${username} --insecure-skip-tls-verify"
 
     local error_output
     error_output=$(mktemp)
 
     if kubectl vsphere login \
         --server "${supervisor_ip}" \
-        --username "${username}" \
-        --password "${password}" \
+        --vsphere-username "${username}" \
+        --vsphere-password "${password}" \
         --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
         echo -e "${GREEN}[vSphere Login]${NC} Supervisor ${suffix}: login successful"
         rm -f "${error_output}"
@@ -222,15 +222,15 @@ vsphere_workload_login() {
     local password="$5"
 
     info "[vSphere]   Workload login: ${cluster_name} (server=${supervisor_ip}, ns=${namespace}, user=${username})"
-    info "[vSphere]   Running: kubectl vsphere login --server ${supervisor_ip} --username ${username} --tanzu-kubernetes-cluster-name ${cluster_name} --tanzu-kubernetes-cluster-namespace ${namespace} --insecure-skip-tls-verify"
+    info "[vSphere]   Running: kubectl vsphere login --server ${supervisor_ip} --vsphere-username ${username} --tanzu-kubernetes-cluster-name ${cluster_name} --tanzu-kubernetes-cluster-namespace ${namespace} --insecure-skip-tls-verify"
 
     local error_output
     error_output=$(mktemp)
 
     if kubectl vsphere login \
         --server "${supervisor_ip}" \
-        --username "${username}" \
-        --password "${password}" \
+        --vsphere-username "${username}" \
+        --vsphere-password "${password}" \
         --tanzu-kubernetes-cluster-name "${cluster_name}" \
         --tanzu-kubernetes-cluster-namespace "${namespace}" \
         --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
