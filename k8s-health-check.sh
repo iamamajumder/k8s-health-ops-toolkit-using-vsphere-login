@@ -27,6 +27,7 @@ source "${SCRIPT_DIR}/lib/health.sh"
 source "${SCRIPT_DIR}/lib/comparison.sh"
 source "${SCRIPT_DIR}/lib/vsphere-login.sh"
 
+
 # Source all health check sections
 for section in "${SCRIPT_DIR}"/lib/sections/*.sh; do
     source "${section}"
@@ -766,9 +767,6 @@ run_health_checks() {
     prepare_tmc_contexts "${config_file}"
     echo ""
 
-    # Start vSphere login in background
-    start_vsphere_login_background "${cluster_list}"
-
     if [[ "${parallel}" == "true" ]]; then
         # Parallel execution (batch-based)
         echo ""
@@ -1143,6 +1141,10 @@ main() {
 
     # Run health checks
     run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}" "${PARALLEL_MODE}" "${BATCH_SIZE}"
+
+    # Run vSphere login at the end (synchronous)
+    local cluster_list=$(get_cluster_list "${CONFIG_FILE}")
+    run_vsphere_login "${cluster_list}"
 }
 
 main "$@"

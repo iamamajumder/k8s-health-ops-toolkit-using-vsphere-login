@@ -130,29 +130,21 @@ Selected version: v1.29.15+vmware.1
 - **All Scripts Updated**: k8s-health-check.sh, k8s-cluster-upgrade.sh, k8s-ops-cmd.sh, lib/tmc.sh
 
 #### Automated vSphere Login (`lib/vsphere-login.sh`)
-- **Background vSphere Login Process**: Automatically logs into Supervisor clusters and Workload clusters using `kubectl vsphere login` as a background process, running parallel to main operations
+- **Synchronous vSphere Login**: Automatically logs into Supervisor clusters and Workload clusters using `kubectl vsphere login`, running at the **end** of each script after main operations complete
 - **Dual Credential System**:
   - **Supervisor & Prod Workloads**: Uses TMC (AO) credentials (`TMC_SELF_MANAGED_USERNAME`/`TMC_SELF_MANAGED_PASSWORD`)
   - **Non-Prod Workloads**: Uses separate Non-AO credentials (`VSPHERE_NONPROD_USERNAME`/`VSPHERE_NONPROD_PASSWORD`) - prompted interactively if needed
 - **Supervisor IP Mapping**: Configurable static mapping of cluster suffixes to Supervisor IP/FQDN in `SUPERVISOR_IP_MAP`
+- **Namespace Discovery**: After supervisor login, runs `kubectl get cluster -A` to discover workload cluster namespaces
 - **Intelligent Deduplication**: Only one Supervisor login per unique suffix (e.g., prod-1, uat-2)
-- **Cross-Script Guard**: `VSPHERE_LOGIN_DONE` flag prevents duplicate logins when upgrade script calls health-check as subprocess
 - **Graceful Degradation**: Skips automatically if `kubectl vsphere` plugin not available
 
 ### Integration Points 🔗
 
 **All three main scripts integrated:**
-1. **k8s-health-check.sh**
-   - Calls `prepare_tmc_contexts()` for both parallel and sequential modes (previously parallel-only)
-   - Starts vSphere login in background after TMC context preparation
-
-2. **k8s-cluster-upgrade.sh**
-   - **Single cluster mode**: Prepares TMC context + starts vSphere login before PRE health check
-   - **Multi-cluster sequential**: Prepares all contexts + starts vSphere login before cluster loop
-   - **Multi-cluster parallel**: Starts vSphere login after context preparation
-
-3. **k8s-ops-cmd.sh**
-   - Starts vSphere login after TMC context preparation (works for both management and file-based modes)
+1. **k8s-health-check.sh** - Calls `run_vsphere_login()` at end of `main()`
+2. **k8s-cluster-upgrade.sh** - Calls `run_vsphere_login()` after upgrade operations complete
+3. **k8s-ops-cmd.sh** - Calls `run_vsphere_login()` at end of `run_ops_command()`
 
 ### Configuration Required 🔧
 
@@ -177,40 +169,48 @@ declare -A SUPERVISOR_IP_MAP=(
 |----------|---------|---------|
 | `VSPHERE_NONPROD_USERNAME` | Non-AO username for non-prod clusters | `vsphere_nonprod_user` |
 | `VSPHERE_NONPROD_PASSWORD` | Non-AO password for non-prod clusters | (prompted if not set) |
-| `VSPHERE_LOGIN_DONE` | Internal guard flag (set automatically) | (do not set manually) |
 
 ### Usage Examples 💡
 
 ```bash
-# vSphere login happens automatically in background with all scripts
+# vSphere login runs automatically at the end of all scripts
 
-# Health check - vSphere login runs after TMC context prep
+# Health check - vSphere login runs after health checks complete
 ./k8s-health-check.sh --mode pre
 
-# Upgrade - vSphere login for single cluster
+# Upgrade - vSphere login runs after upgrade completes
 ./k8s-cluster-upgrade.sh -c prod-workload-01
 
-# Multi-cluster ops - vSphere login for all clusters
+# Multi-cluster ops - vSphere login runs after ops command completes
 ./k8s-ops-cmd.sh "kubectl get nodes"
+
+# Pre-export credentials to avoid interactive prompts
+export TMC_SELF_MANAGED_USERNAME='ao-user'
+export TMC_SELF_MANAGED_PASSWORD='ao-pass'
+export VSPHERE_NONPROD_USERNAME='nonao-user'
+export VSPHERE_NONPROD_PASSWORD='nonao-pass'
 ```
 
 ### Console Output 📟
 
-When vSphere login is running, you'll see console messages like:
+When vSphere login runs at the end, you'll see:
 
 ```
-[vSphere Login] Success login to Supervisor prod-1
-[vSphere Login] Success login to prod-workload-01
-[vSphere Login] Success login to Supervisor uat-2
-[vSphere Login] Success login to uat-system-01
+=== vSphere Login ===
+[vSphere Login] Supervisor prod-1: login successful
+[vSphere Login] prod-workload-01: login successful
+[vSphere Login] Supervisor uat-2: login successful
+[vSphere Login] uat-system-01: login successful
+
+vSphere Login Summary: 4 successful, 0 failed
 ```
 
 ### Files Modified 📝
 
-- **New**: `lib/vsphere-login.sh` (~180 lines)
-- **Modified**: `k8s-health-check.sh` (added module sourcing, restructured run_health_checks)
-- **Modified**: `k8s-cluster-upgrade.sh` (added module sourcing, integrated in all 3 modes)
-- **Modified**: `k8s-ops-cmd.sh` (added module sourcing, integrated in run_ops_command)
+- **Rewritten**: `lib/vsphere-login.sh` (~280 lines, synchronous architecture)
+- **Modified**: `k8s-health-check.sh` (vsphere login at end of main)
+- **Modified**: `k8s-cluster-upgrade.sh` (vsphere login after upgrade operations)
+- **Modified**: `k8s-ops-cmd.sh` (vsphere login at end of run_ops_command)
 - **Updated**: `CLAUDE.md` (documentation on new module)
 - **Updated**: `README.md` (added configuration steps, environment variables)
 
@@ -223,13 +223,11 @@ When vSphere login is running, you'll see console messages like:
 
 ### Testing Checklist ✓
 
-- ✓ vSphere login works in parallel mode
-- ✓ vSphere login works in sequential mode
-- ✓ Non-prod credentials prompted only once per session
+- ✓ vSphere login runs synchronously at end of each script
+- ✓ Credentials prompted upfront before any login attempt
 - ✓ Supervisor logins deduplicated (only one per suffix)
-- ✓ Cross-script guard prevents duplicate login (upgrade→health-check chain)
+- ✓ Namespace discovery via `kubectl get cluster -A` on supervisor
 - ✓ Gracefully skips if kubectl vsphere plugin unavailable
-- ✓ Console output visible during background execution
 - ✓ All three scripts integrate correctly
 
 ---

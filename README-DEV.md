@@ -32,14 +32,18 @@ VKS 3.3.3 | Kubernetes 1.28-1.32 | Bash 4.0+ | TMC Self-Managed
 vi lib/tmc-context.sh
 # Set NON_PROD_DNS and PROD_DNS on lines 7-8
 
-# 2. Create cluster list
+# 2. Configure Supervisor IPs for vSphere login (one-time setup)
+vi lib/vsphere-login.sh
+# Update SUPERVISOR_IP_MAP with actual Supervisor cluster IPs/FQDNs
+
+# 3. Create cluster list
 echo "prod-workload-01" > clusters.conf
 echo "prod-workload-02" >> clusters.conf
 
-# 3. Make scripts executable
+# 4. Make scripts executable
 chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
 
-# 4. Run your first health check
+# 5. Run your first health check
 ./k8s-health-check.sh --mode pre
 ```
 
@@ -195,6 +199,7 @@ LIBRARY MODULES (lib/)
 +-- tmc.sh            TMC API, metadata discovery, kubeconfig
 +-- health.sh         Metrics collection, status calculation
 +-- comparison.sh     PRE/POST delta calculation, reports
++-- vsphere-login.sh  Automated vSphere login (runs at end of each script)
 
 HEALTH CHECK SECTIONS (lib/sections/)
 |
@@ -288,6 +293,61 @@ tanzu tmc cluster upgrade CLUSTER -m MGMT -p PROV --latest
 - Existing calls without 5th parameter continue to work unchanged
 - No breaking changes to command-line arguments or workflows
 
+### vSphere Login Architecture (v2.0)
+
+Automated `kubectl vsphere login` for Supervisor and Workload clusters. Runs **synchronously at the end** of each script after main operations complete.
+
+**Module:** `lib/vsphere-login.sh`
+
+**Flow:**
+```
+1. Check kubectl vsphere plugin available (skip gracefully if not)
+2. Collect ALL credentials upfront:
+   a. AO creds: check TMC_SELF_MANAGED_USERNAME/PASSWORD env vars -> prompt if missing -> export
+   b. Non-AO creds: if non-prod clusters exist -> check VSPHERE_NONPROD_USERNAME/PASSWORD -> prompt if missing -> export
+3. Group clusters by supervisor suffix (deduplicate supervisors)
+4. For each unique supervisor:
+   a. Login to supervisor (AO credentials)
+   b. Discover workload namespaces: kubectl get cluster -A
+   c. For each workload cluster:
+      - Find namespace from discovered metadata (fallback: TMC metadata cache)
+      - Select credentials (prod -> AO, non-prod -> Non-AO)
+      - Login to workload cluster
+5. Print summary (successful/failed counts)
+```
+
+**Credential Strategy:**
+
+| Login Target | Prod Clusters | Non-Prod Clusters |
+|-------------|---------------|-------------------|
+| Supervisor | AO creds (`TMC_SELF_MANAGED_*`) | AO creds (`TMC_SELF_MANAGED_*`) |
+| Workload cluster | AO creds (`TMC_SELF_MANAGED_*`) | Non-AO creds (`VSPHERE_NONPROD_*`) |
+
+**Integration Points:**
+- `k8s-health-check.sh`: `run_vsphere_login()` at end of `main()`
+- `k8s-cluster-upgrade.sh`: `run_vsphere_login()` after upgrade operations, before exit
+- `k8s-ops-cmd.sh`: `run_vsphere_login()` at end of `run_ops_command()`
+
+**Key Functions:**
+
+| Function | Purpose |
+|----------|---------|
+| `run_vsphere_login()` | Public entry point, orchestrates full flow |
+| `ensure_vsphere_credentials()` | Collects all credentials upfront (env vars first, prompts if missing) |
+| `extract_cluster_suffix()` | Extract suffix (e.g., `prod-1`) from cluster name |
+| `get_supervisor_ip()` | Lookup supervisor IP from `SUPERVISOR_IP_MAP` |
+| `vsphere_supervisor_login()` | Login to supervisor cluster |
+| `discover_workload_namespaces()` | Run `kubectl get cluster -A` on supervisor |
+| `vsphere_workload_login()` | Login to workload cluster with namespace |
+
+**Pre-export to avoid prompts:**
+```bash
+export TMC_SELF_MANAGED_USERNAME='ao-user'
+export TMC_SELF_MANAGED_PASSWORD='ao-pass'
+export VSPHERE_NONPROD_USERNAME='nonao-user'
+export VSPHERE_NONPROD_PASSWORD='nonao-pass'
+```
+
 ---
 
 ## 4. Configuration
@@ -309,12 +369,31 @@ PROD_DNS="your-prod-tmc.example.com"
 | `*-uat-[1-4]` | Non-production | tmc-sm-nonprod |
 | `*-system-[1-4]` | Non-production | tmc-sm-nonprod |
 
+### vSphere Supervisor IP Configuration
+
+Edit `lib/vsphere-login.sh` (lines 22-31) to configure Supervisor cluster IPs/FQDNs:
+
+```bash
+declare -A SUPERVISOR_IP_MAP=(
+    ["prod-1"]="<supervisor-prod-1-ip-or-fqdn>"
+    ["prod-2"]="<supervisor-prod-2-ip-or-fqdn>"
+    ["prod-3"]="<supervisor-prod-3-ip-or-fqdn>"
+    ["prod-4"]="<supervisor-prod-4-ip-or-fqdn>"
+    ["system-1"]="<supervisor-system-1-ip-or-fqdn>"
+    ["system-3"]="<supervisor-system-3-ip-or-fqdn>"
+    ["uat-2"]="<supervisor-uat-2-ip-or-fqdn>"
+    ["uat-4"]="<supervisor-uat-4-ip-or-fqdn>"
+)
+```
+
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `TMC_SELF_MANAGED_USERNAME` | TMC username (prompts if not set) |
-| `TMC_SELF_MANAGED_PASSWORD` | TMC password (prompts if not set) |
+| `TMC_SELF_MANAGED_USERNAME` | TMC / AO username (prompts if not set) |
+| `TMC_SELF_MANAGED_PASSWORD` | TMC / AO password (prompts if not set) |
+| `VSPHERE_NONPROD_USERNAME` | Non-AO username for non-prod workload cluster vSphere login (prompts if needed) |
+| `VSPHERE_NONPROD_PASSWORD` | Non-AO password for non-prod workload cluster vSphere login (prompts if needed) |
 | `DEBUG` | Set to `on` for verbose output |
 
 ---
@@ -322,7 +401,7 @@ PROD_DNS="your-prod-tmc.example.com"
 ## 5. Output Structure
 
 ```
-~/k8s-health-check/output/
+<script-dir>/output/
 |
 +-- cluster-name/
 |   +-- kubeconfig                         # Cached credentials (12h expiry)

@@ -347,7 +347,7 @@ Executes commands across multiple clusters with parallel batch execution.
 | `tmc.sh` | TMC integration, metadata discovery, kubeconfig fetching |
 | `health.sh` | Health metrics collection and status calculation |
 | `comparison.sh` | PRE/POST comparison logic and report generation |
-| `vsphere-login.sh` | Automated `kubectl vsphere login` for Supervisor and Workload clusters |
+| `vsphere-login.sh` | Automated `kubectl vsphere login` for Supervisor and Workload clusters (runs at end of each script) |
 
 ---
 
@@ -503,7 +503,7 @@ See [RELEASE.md](RELEASE.md) for detailed release notes.
 | Version | Highlights |
 |---------|------------|
 | **4.2** | Interactive version selection for cluster upgrades, query available versions from TMC, targeted upgrades |
-| **4.1** | vSphere login automation for Supervisor and Workload clusters, background process, dual credential system |
+| **4.1** | vSphere login automation for Supervisor and Workload clusters, synchronous end-of-script execution, dual credential system |
 | **3.8** | Codebase refactoring (~455 lines removed), shared functions, data-driven comparison |
 | **3.7** | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes |
 | **3.6** | Per-cluster output structure, consolidated kubeconfig, automatic cleanup |

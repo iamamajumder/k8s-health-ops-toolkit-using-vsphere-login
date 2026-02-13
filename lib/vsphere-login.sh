@@ -1,7 +1,11 @@
 #!/bin/bash
 #===============================================================================
-# vSphere Login Module
+# vSphere Login Module (v2.0)
 # Handles automated kubectl vsphere login for Supervisor and Workload clusters
+#
+# Architecture: Synchronous execution, called at the end of each script
+# Flow: Ensure credentials → Group by supervisor → Login supervisor →
+#       Discover workload namespaces → Login workload clusters
 #===============================================================================
 
 # Source common functions if not already loaded
@@ -24,14 +28,6 @@ declare -A SUPERVISOR_IP_MAP=(
     ["uat-2"]="<supervisor-uat-2-ip-or-fqdn>"
     ["uat-4"]="<supervisor-uat-4-ip-or-fqdn>"
 )
-
-#===============================================================================
-# Non-Prod Credential Variables
-#===============================================================================
-# Separate credentials for non-prod workload cluster login (Non-AO account)
-VSPHERE_NONPROD_USERNAME=""
-VSPHERE_NONPROD_PASSWORD=""
-VSPHERE_NONPROD_CREDENTIALS_PROMPTED=""
 
 #===============================================================================
 # Helper Functions
@@ -59,50 +55,71 @@ get_supervisor_ip() {
     echo "${SUPERVISOR_IP_MAP[$suffix]:-}"
 }
 
-# Prompt for Non-Prod vSphere credentials (Non-AO account)
-prompt_vsphere_nonprod_credentials() {
-    # Skip if already prompted or credentials are set
-    if [[ -n "${VSPHERE_NONPROD_CREDENTIALS_PROMPTED}" ]]; then
-        return 0
-    fi
+#===============================================================================
+# Credential Management
+#===============================================================================
 
-    # Check if credentials are already set via environment variables
-    if [[ -n "${VSPHERE_NONPROD_USERNAME:-}" ]] && [[ -n "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
-        VSPHERE_NONPROD_CREDENTIALS_PROMPTED="true"
-        return 0
-    fi
+# Ensure all required vSphere credentials are available before any login attempt
+# Checks env vars first, prompts interactively if missing
+ensure_vsphere_credentials() {
+    local cluster_list="$1"
 
-    echo ""
-    echo -e "${YELLOW}Non-Prod vSphere credentials required (Non-AO account)${NC}"
-    echo "Used for workload cluster login to system-* and uat-* clusters."
-    echo ""
-
-    # Prompt for username if not provided
-    if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" ]]; then
-        echo -n "Enter Non-Prod vSphere username: "
-        read -r VSPHERE_NONPROD_USERNAME </dev/tty
-        if [[ -z "${VSPHERE_NONPROD_USERNAME}" ]]; then
+    # --- AO Credentials (used for all supervisor logins + prod workload logins) ---
+    if [[ -z "${TMC_SELF_MANAGED_USERNAME:-}" ]]; then
+        echo -n "Enter vSphere AO username (same as TMC username): " >&2
+        read -r TMC_SELF_MANAGED_USERNAME </dev/tty
+        if [[ -z "${TMC_SELF_MANAGED_USERNAME}" ]]; then
             error "Username cannot be empty"
             return 1
         fi
-        export VSPHERE_NONPROD_USERNAME
     fi
-
-    # Prompt for password if not provided
-    if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
-        echo -n "Enter Non-Prod vSphere password: "
-        read -r -s VSPHERE_NONPROD_PASSWORD </dev/tty
-        echo ""
-        if [[ -z "${VSPHERE_NONPROD_PASSWORD}" ]]; then
+    if [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
+        echo -n "Enter vSphere AO password (same as TMC password): " >&2
+        read -r -s TMC_SELF_MANAGED_PASSWORD </dev/tty
+        echo "" >&2
+        if [[ -z "${TMC_SELF_MANAGED_PASSWORD}" ]]; then
             error "Password cannot be empty"
             return 1
         fi
-        export VSPHERE_NONPROD_PASSWORD
+    fi
+    export TMC_SELF_MANAGED_USERNAME TMC_SELF_MANAGED_PASSWORD
+
+    # --- Non-AO Credentials (only for non-prod workload logins) ---
+    local has_nonprod=false
+    while IFS= read -r cluster; do
+        [[ -z "${cluster}" ]] && continue
+        local env=$(determine_environment "${cluster}")
+        if [[ "${env}" == "nonprod" ]]; then
+            has_nonprod=true
+            break
+        fi
+    done <<< "${cluster_list}"
+
+    if [[ "${has_nonprod}" == "true" ]]; then
+        if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" ]]; then
+            echo "" >&2
+            echo -e "${YELLOW}Non-Prod vSphere credentials required (Non-AO account)${NC}" >&2
+            echo "Used for workload cluster login to system-* and uat-* clusters." >&2
+            echo "" >&2
+            echo -n "Enter Non-Prod vSphere username: " >&2
+            read -r VSPHERE_NONPROD_USERNAME </dev/tty
+            if [[ -z "${VSPHERE_NONPROD_USERNAME}" ]]; then
+                error "Username cannot be empty"
+                return 1
+            fi
+        fi
+        if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
+            echo -n "Enter Non-Prod vSphere password: " >&2
+            read -r -s VSPHERE_NONPROD_PASSWORD </dev/tty
+            echo "" >&2
+            if [[ -z "${VSPHERE_NONPROD_PASSWORD}" ]]; then
+                error "Password cannot be empty"
+                return 1
+            fi
+        fi
+        export VSPHERE_NONPROD_USERNAME VSPHERE_NONPROD_PASSWORD
     fi
 
-    VSPHERE_NONPROD_CREDENTIALS_PROMPTED="true"
-    success "Non-Prod vSphere credentials configured"
-    echo ""
     return 0
 }
 
@@ -114,8 +131,8 @@ prompt_vsphere_nonprod_credentials() {
 vsphere_supervisor_login() {
     local suffix="$1"
     local supervisor_ip="$2"
-    local username="${TMC_SELF_MANAGED_USERNAME}"
-    local password="${TMC_SELF_MANAGED_PASSWORD}"
+    local username="$3"
+    local password="$4"
 
     debug "[vSphere Login] Logging in to Supervisor ${suffix}..."
 
@@ -127,48 +144,39 @@ vsphere_supervisor_login() {
         --username "${username}" \
         --password "${password}" \
         --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
-        echo -e "${GREEN}[vSphere Login]${NC} Success login to Supervisor ${suffix}"
+        echo -e "${GREEN}[vSphere Login]${NC} Supervisor ${suffix}: login successful"
         rm -f "${error_output}"
         return 0
     else
         local error_msg=$(cat "${error_output}" | head -n 1)
         if [[ -n "${error_msg}" ]]; then
-            echo -e "${RED}[vSphere Login]${NC} Failed login to Supervisor ${suffix}: ${error_msg}"
+            echo -e "${RED}[vSphere Login]${NC} Supervisor ${suffix}: login failed - ${error_msg}"
         else
-            echo -e "${RED}[vSphere Login]${NC} Failed login to Supervisor ${suffix}"
+            echo -e "${RED}[vSphere Login]${NC} Supervisor ${suffix}: login failed"
         fi
         rm -f "${error_output}"
         return 1
     fi
 }
 
+# Discover workload cluster namespaces from supervisor
+# Output: lines of "NAMESPACE CLUSTER_NAME"
+discover_workload_namespaces() {
+    local supervisor_ip="$1"
+
+    kubectl --server="https://${supervisor_ip}" get cluster -A --no-headers 2>/dev/null | \
+        awk '{print $1, $2}'
+}
+
 # Login to Workload cluster
 vsphere_workload_login() {
     local cluster_name="$1"
-    local suffix="$2"
-    local supervisor_ip="$3"
-    local provisioner="$4"
-    local environment="$5"  # "prod" or "nonprod"
+    local supervisor_ip="$2"
+    local namespace="$3"
+    local username="$4"
+    local password="$5"
 
-    # Determine credentials based on environment
-    local username
-    local password
-
-    if [[ "${environment}" == "prod" ]]; then
-        username="${TMC_SELF_MANAGED_USERNAME}"
-        password="${TMC_SELF_MANAGED_PASSWORD}"
-    else
-        username="${VSPHERE_NONPROD_USERNAME}"
-        password="${VSPHERE_NONPROD_PASSWORD}"
-
-        # Check if non-prod credentials are available
-        if [[ -z "${username}" ]] || [[ -z "${password}" ]]; then
-            debug "[vSphere Login] Non-Prod credentials not available for ${cluster_name}, skipping"
-            return 1
-        fi
-    fi
-
-    debug "[vSphere Login] Logging in to Workload cluster ${cluster_name} (${environment})..."
+    debug "[vSphere Login] Logging in to workload cluster ${cluster_name} (ns: ${namespace})..."
 
     local error_output
     error_output=$(mktemp)
@@ -178,17 +186,17 @@ vsphere_workload_login() {
         --username "${username}" \
         --password "${password}" \
         --tanzu-kubernetes-cluster-name "${cluster_name}" \
-        --tanzu-kubernetes-cluster-namespace "${provisioner}" \
+        --tanzu-kubernetes-cluster-namespace "${namespace}" \
         --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
-        echo -e "${GREEN}[vSphere Login]${NC} Success login to ${cluster_name}"
+        echo -e "${GREEN}[vSphere Login]${NC} ${cluster_name}: login successful"
         rm -f "${error_output}"
         return 0
     else
         local error_msg=$(cat "${error_output}" | head -n 1)
         if [[ -n "${error_msg}" ]]; then
-            echo -e "${RED}[vSphere Login]${NC} Failed login to ${cluster_name}: ${error_msg}"
+            echo -e "${RED}[vSphere Login]${NC} ${cluster_name}: login failed - ${error_msg}"
         else
-            echo -e "${RED}[vSphere Login]${NC} Failed login to ${cluster_name}"
+            echo -e "${RED}[vSphere Login]${NC} ${cluster_name}: login failed"
         fi
         rm -f "${error_output}"
         return 1
@@ -199,75 +207,14 @@ vsphere_workload_login() {
 # Main Login Orchestration
 #===============================================================================
 
-# Login to all clusters (Supervisor + Workload)
-vsphere_login_all() {
+# Public entry point - orchestrates the full vSphere login flow
+# Usage: run_vsphere_login "cluster1\ncluster2\ncluster3"
+run_vsphere_login() {
     local cluster_list="$1"
 
-    # Track logged supervisors to avoid duplicates
-    declare -A logged_supervisors
-
-    # Process each cluster
-    while IFS= read -r cluster_name; do
-        # Extract suffix
-        local suffix
-        if ! suffix=$(extract_cluster_suffix "${cluster_name}"); then
-            warning "[vSphere Login] Cannot extract suffix from ${cluster_name}, skipping"
-            continue
-        fi
-
-        # Get supervisor IP
-        local supervisor_ip=$(get_supervisor_ip "${suffix}")
-        if [[ -z "${supervisor_ip}" || "${supervisor_ip}" == "<"* ]]; then
-            warning "[vSphere Login] Supervisor IP not configured for ${suffix}, skipping ${cluster_name}"
-            continue
-        fi
-
-        # Determine environment (prod/nonprod)
-        local environment=$(determine_environment "${cluster_name}")
-        if [[ "${environment}" == "unknown" ]]; then
-            warning "[vSphere Login] Unknown environment for ${cluster_name}, skipping"
-            continue
-        fi
-
-        # Login to Supervisor (once per suffix)
-        if [[ -z "${logged_supervisors[$suffix]:-}" ]]; then
-            vsphere_supervisor_login "${suffix}" "${supervisor_ip}"
-            logged_supervisors[$suffix]="done"
-        fi
-
-        # Discover provisioner/namespace for workload cluster login
-        local metadata
-        if ! metadata=$(discover_cluster_metadata "${cluster_name}" 2>/dev/null); then
-            warning "[vSphere Login] Cannot discover metadata for ${cluster_name}, skipping workload login"
-            continue
-        fi
-
-        local provisioner
-        provisioner=$(echo "${metadata}" | cut -d'|' -f2 | tr -d ' \n\r\t')
-
-        if [[ -z "${provisioner}" ]]; then
-            warning "[vSphere Login] Cannot determine provisioner for ${cluster_name}, skipping workload login"
-            continue
-        fi
-
-        # Login to Workload cluster
-        vsphere_workload_login "${cluster_name}" "${suffix}" "${supervisor_ip}" "${provisioner}" "${environment}"
-
-    done <<< "${cluster_list}"
-}
-
-#===============================================================================
-# Public Entry Point
-#===============================================================================
-
-# Start vSphere login in background
-# Usage: start_vsphere_login_background "cluster1\ncluster2\ncluster3"
-start_vsphere_login_background() {
-    local cluster_list="$1"
-
-    # Guard: Skip if already done (prevents duplicate in upgrade→health-check subprocess)
-    if [[ -n "${VSPHERE_LOGIN_DONE:-}" ]]; then
-        debug "[vSphere Login] Already completed in parent process, skipping"
+    # Skip if no clusters provided
+    if [[ -z "${cluster_list}" ]]; then
+        debug "[vSphere Login] No clusters provided, skipping"
         return 0
     fi
 
@@ -277,68 +224,121 @@ start_vsphere_login_background() {
         return 0
     fi
 
-    # Ensure TMC credentials are available
-    # Try to get from environment first, then from tanzu CLI context
-    if [[ -z "${TMC_SELF_MANAGED_USERNAME:-}" ]] || [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
-        # Check if we can extract from current tanzu context
-        local current_context=$(tanzu context current 2>/dev/null | grep -oP 'Name:\s+\K.*' || true)
-        if [[ -z "${current_context}" ]]; then
-            warning "[vSphere Login] TMC credentials not available in environment"
-            echo -e "${YELLOW}Tip:${NC} To enable vSphere login on subsequent runs, export credentials:"
-            echo "  export TMC_SELF_MANAGED_USERNAME='your-username'"
-            echo "  export TMC_SELF_MANAGED_PASSWORD='your-password'"
-            echo ""
-            return 0
-        fi
+    echo ""
+    print_section "vSphere Login"
 
-        # Extract username from tanzu context (if available)
-        TMC_SELF_MANAGED_USERNAME=$(tanzu context get "${current_context}" 2>/dev/null | grep -oP 'Username:\s+\K.*' || true)
-
-        if [[ -z "${TMC_SELF_MANAGED_USERNAME}" ]] || [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
-            warning "[vSphere Login] TMC credentials not fully available"
-            echo -e "${YELLOW}Tip:${NC} To enable vSphere login on subsequent runs, export credentials:"
-            echo "  export TMC_SELF_MANAGED_USERNAME='your-username'"
-            echo "  export TMC_SELF_MANAGED_PASSWORD='your-password'"
-            echo ""
-            return 0
-        fi
+    # Step 1: Collect all credentials upfront
+    if ! ensure_vsphere_credentials "${cluster_list}"; then
+        warning "[vSphere Login] Credentials not available, skipping vSphere login"
+        return 0
     fi
 
-    # Check if any non-prod clusters exist in the list
-    local has_nonprod=false
+    # Step 2: Group clusters by supervisor suffix
+    declare -A supervisor_clusters  # suffix → newline-separated cluster list
+    declare -A suffix_ip            # suffix → supervisor IP
+    local login_success=0
+    local login_failed=0
+
     while IFS= read -r cluster_name; do
-        local env=$(determine_environment "${cluster_name}")
-        if [[ "${env}" == "nonprod" ]]; then
-            has_nonprod=true
-            break
+        [[ -z "${cluster_name}" ]] && continue
+
+        local suffix
+        if ! suffix=$(extract_cluster_suffix "${cluster_name}"); then
+            warning "[vSphere Login] Cannot extract suffix from ${cluster_name}, skipping"
+            login_failed=$((login_failed + 1))
+            continue
+        fi
+
+        local supervisor_ip=$(get_supervisor_ip "${suffix}")
+        if [[ -z "${supervisor_ip}" || "${supervisor_ip}" == "<"* ]]; then
+            warning "[vSphere Login] Supervisor IP not configured for ${suffix}, skipping ${cluster_name}"
+            login_failed=$((login_failed + 1))
+            continue
+        fi
+
+        suffix_ip["${suffix}"]="${supervisor_ip}"
+
+        if [[ -n "${supervisor_clusters[$suffix]:-}" ]]; then
+            supervisor_clusters["${suffix}"]="${supervisor_clusters[$suffix]}
+${cluster_name}"
+        else
+            supervisor_clusters["${suffix}"]="${cluster_name}"
         fi
     done <<< "${cluster_list}"
 
-    # Prompt for non-prod credentials in foreground if needed
-    if [[ "${has_nonprod}" == "true" ]]; then
-        if ! prompt_vsphere_nonprod_credentials; then
-            warning "[vSphere Login] Non-Prod credentials not available, skipping non-prod clusters"
+    # Step 3: Process each supervisor group
+    for suffix in "${!suffix_ip[@]}"; do
+        local supervisor_ip="${suffix_ip[$suffix]}"
+
+        # Login to supervisor (AO credentials for all supervisors)
+        if ! vsphere_supervisor_login "${suffix}" "${supervisor_ip}" "${TMC_SELF_MANAGED_USERNAME}" "${TMC_SELF_MANAGED_PASSWORD}"; then
+            # Supervisor login failed - skip all workload clusters in this group
+            local skip_count=$(echo "${supervisor_clusters[$suffix]}" | wc -l | tr -d ' ')
+            warning "[vSphere Login] Skipping ${skip_count} workload cluster(s) under supervisor ${suffix}"
+            login_failed=$((login_failed + skip_count))
+            continue
         fi
-    fi
 
-    # Mark as done before backgrounding (so subprocess sees it)
-    export VSPHERE_LOGIN_DONE="true"
+        # Discover workload cluster namespaces from supervisor
+        local namespace_data
+        namespace_data=$(discover_workload_namespaces "${supervisor_ip}")
 
-    # Start background login process
-    progress "[vSphere Login] Starting background login process..."
+        # Process each cluster in this supervisor group
+        while IFS= read -r cluster_name; do
+            [[ -z "${cluster_name}" ]] && continue
+
+            # Find namespace for this cluster from discovered metadata
+            local namespace=""
+            if [[ -n "${namespace_data}" ]]; then
+                namespace=$(echo "${namespace_data}" | awk -v name="${cluster_name}" '$2 == name {print $1; exit}')
+            fi
+
+            if [[ -z "${namespace}" ]]; then
+                # Fallback: try to get provisioner from TMC metadata cache
+                local metadata
+                if metadata=$(discover_cluster_metadata "${cluster_name}" 2>/dev/null); then
+                    namespace=$(echo "${metadata}" | cut -d'|' -f2 | tr -d ' \n\r\t')
+                fi
+            fi
+
+            if [[ -z "${namespace}" ]]; then
+                warning "[vSphere Login] Cannot determine namespace for ${cluster_name}, skipping"
+                login_failed=$((login_failed + 1))
+                continue
+            fi
+
+            # Determine credentials (prod → AO, non-prod → Non-AO)
+            local environment=$(determine_environment "${cluster_name}")
+            local wl_username wl_password
+
+            if [[ "${environment}" == "prod" ]]; then
+                wl_username="${TMC_SELF_MANAGED_USERNAME}"
+                wl_password="${TMC_SELF_MANAGED_PASSWORD}"
+            else
+                wl_username="${VSPHERE_NONPROD_USERNAME}"
+                wl_password="${VSPHERE_NONPROD_PASSWORD}"
+            fi
+
+            if [[ -z "${wl_username}" || -z "${wl_password}" ]]; then
+                warning "[vSphere Login] Credentials not available for ${cluster_name} (${environment}), skipping"
+                login_failed=$((login_failed + 1))
+                continue
+            fi
+
+            # Login to workload cluster
+            if vsphere_workload_login "${cluster_name}" "${supervisor_ip}" "${namespace}" "${wl_username}" "${wl_password}"; then
+                login_success=$((login_success + 1))
+            else
+                login_failed=$((login_failed + 1))
+            fi
+
+        done <<< "${supervisor_clusters[$suffix]}"
+    done
+
+    # Step 4: Print summary
     echo ""
-
-    # Store PID for optional waiting
-    vsphere_login_all "${cluster_list}" &
-    export VSPHERE_LOGIN_PID=$!
-
-    # If VSPHERE_LOGIN_WAIT is set, wait for completion (useful for debugging)
-    if [[ "${VSPHERE_LOGIN_WAIT:-false}" == "true" ]]; then
-        progress "[vSphere Login] Waiting for login to complete..."
-        wait ${VSPHERE_LOGIN_PID}
-        progress "[vSphere Login] Login process completed"
-        echo ""
-    fi
+    echo -e "${CYAN}vSphere Login Summary:${NC} ${GREEN}${login_success} successful${NC}, ${RED}${login_failed} failed${NC}"
+    echo ""
 
     return 0
 }
@@ -349,8 +349,8 @@ start_vsphere_login_background() {
 
 export -f extract_cluster_suffix
 export -f get_supervisor_ip
-export -f prompt_vsphere_nonprod_credentials
+export -f ensure_vsphere_credentials
 export -f vsphere_supervisor_login
+export -f discover_workload_namespaces
 export -f vsphere_workload_login
-export -f vsphere_login_all
-export -f start_vsphere_login_background
+export -f run_vsphere_login

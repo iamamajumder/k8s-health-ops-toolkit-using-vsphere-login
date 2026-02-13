@@ -714,7 +714,6 @@ upgrade_single_cluster() {
         error "Failed to create TMC context. Aborting upgrade."
         return 1
     fi
-    start_vsphere_login_background "${cluster_name}"
 
     # Step 1: Run PRE-upgrade health check
     if ! run_pre_health_check "${cluster_name}" "${output_dir}"; then
@@ -905,13 +904,12 @@ upgrade_multiple_clusters() {
     echo "Config file: ${config_file}"
     echo ""
 
-    # Prepare TMC contexts and start vSphere login
+    # Prepare TMC contexts
     if ! prompt_tmc_credentials; then
         error "Failed to get TMC credentials. Aborting upgrade."
         exit 1
     fi
     prepare_tmc_contexts "${config_file}"
-    start_vsphere_login_background "${cluster_list}"
     echo ""
 
     while IFS= read -r cluster_name; do
@@ -1074,9 +1072,6 @@ upgrade_clusters_parallel() {
 
     # Prepare TMC contexts sequentially first (avoid race conditions)
     prepare_tmc_contexts "${config_file}"
-
-    # Start vSphere login in background
-    start_vsphere_login_background "${cluster_list}"
     echo ""
 
     # Convert cluster list to array
@@ -1462,20 +1457,28 @@ main() {
     parse_arguments "$@"
 
     # Execute appropriate mode
+    local rc=0
+    local vsphere_cluster_list=""
+
     if [[ -n "${SINGLE_CLUSTER}" ]]; then
-        upgrade_single_cluster "${SINGLE_CLUSTER}"
-        exit $?
+        upgrade_single_cluster "${SINGLE_CLUSTER}" || rc=$?
+        vsphere_cluster_list="${SINGLE_CLUSTER}"
     elif [[ "${PARALLEL_MODE}" == "true" ]]; then
-        upgrade_clusters_parallel "${CONFIG_FILE}"
-        exit $?
+        upgrade_clusters_parallel "${CONFIG_FILE}" || rc=$?
+        vsphere_cluster_list=$(get_cluster_list "${CONFIG_FILE}")
     elif [[ -n "${CONFIG_FILE}" ]]; then
-        upgrade_multiple_clusters "${CONFIG_FILE}"
-        exit $?
+        upgrade_multiple_clusters "${CONFIG_FILE}" || rc=$?
+        vsphere_cluster_list=$(get_cluster_list "${CONFIG_FILE}")
     else
         error "No cluster or config file specified"
         usage
         exit 1
     fi
+
+    # Run vSphere login at the end (synchronous)
+    run_vsphere_login "${vsphere_cluster_list}"
+
+    exit ${rc}
 }
 
 # Run main function

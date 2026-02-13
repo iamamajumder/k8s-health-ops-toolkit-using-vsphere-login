@@ -633,9 +633,6 @@ run_ops_command() {
     fi
     # Note: For management discovery mode (-m), context is already prepared at line 582
 
-    # Start vSphere login in background (for both management and file-based modes)
-    start_vsphere_login_background "${cluster_list}"
-
     # Create timestamp for output files
     local timestamp=$(get_timestamp)
 
@@ -710,6 +707,9 @@ run_ops_command() {
     echo ""
     display_banner "Ops Command Complete!"
     echo ""
+
+    # Run vSphere login at the end (synchronous)
+    run_vsphere_login "${cluster_list}"
 }
 
 #===============================================================================
