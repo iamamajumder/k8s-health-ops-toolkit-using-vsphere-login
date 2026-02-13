@@ -178,14 +178,13 @@ vsphere_supervisor_login() {
 }
 
 # Discover workload cluster namespaces from supervisor
+# Relies on kubeconfig context already being set to the supervisor after vsphere_supervisor_login
 # Output: lines of "NAMESPACE CLUSTER_NAME"
 discover_workload_namespaces() {
-    local supervisor_ip="$1"
-
-    info "[vSphere]   Running: kubectl --server=https://${supervisor_ip} get cluster -A --no-headers"
+    info "[vSphere]   Running: kubectl get cluster -A --no-headers"
 
     local raw_output
-    raw_output=$(kubectl --server="https://${supervisor_ip}" get cluster -A --no-headers 2>&1)
+    raw_output=$(kubectl get cluster -A --no-headers 2>&1)
     local exit_code=$?
 
     info "[vSphere]   kubectl get cluster exit code: ${exit_code}"
@@ -355,7 +354,7 @@ ${cluster_name}"
         # Discover workload cluster namespaces from supervisor
         info "[vSphere]   Discovering workload cluster namespaces..."
         local namespace_data
-        namespace_data=$(discover_workload_namespaces "${supervisor_ip}")
+        namespace_data=$(discover_workload_namespaces)
 
         if [[ -z "${namespace_data}" ]]; then
             info "[vSphere]   No namespace data from supervisor discovery"
