@@ -69,7 +69,7 @@ vi lib/vsphere-login.sh
 # Update SUPERVISOR_IP_MAP with actual Supervisor cluster IPs/FQDNs (lines 16-26)
 
 # 4. Create cluster list
-cat > clusters.conf << EOF
+cat > input.conf << EOF
 prod-workload-01
 prod-workload-02
 uat-system-01
@@ -104,7 +104,7 @@ Captures comprehensive cluster state before and after changes. Runs 18 health ch
 | Option | Description |
 |--------|-------------|
 | `--mode pre\|post` | Check mode (required) |
-| `-c, --cluster NAME` | Single cluster (no clusters.conf needed) |
+| `-c, --cluster NAME` | Single cluster (no input.conf needed) |
 | `--sequential` | One cluster at a time (default: parallel) |
 | `--batch-size N` | Clusters per parallel batch (default: 6) |
 | `--cache-status` | Show cache status |
@@ -125,7 +125,7 @@ Captures comprehensive cluster state before and after changes. Runs 18 health ch
 Orchestrates cluster upgrades with PRE/POST health checks and progress monitoring. **v4.2+ includes interactive version selection** to choose specific Kubernetes versions before upgrade.
 
 ```bash
-# Default: Use ./clusters.conf (sequential)
+# Default: Use ./input.conf (sequential)
 # You'll be prompted to select version for each cluster
 ./k8s-cluster-upgrade.sh
 
@@ -362,15 +362,29 @@ NON_PROD_DNS="your-nonprod-tmc.example.com"
 PROD_DNS="your-prod-tmc.example.com"
 ```
 
-### Cluster List (`clusters.conf`)
+### Configuration File (`input.conf`)
 
-One cluster name per line:
+Unified configuration with credentials, supervisor mappings, and cluster names:
 
 ```
+# ===CREDENTIALS===
+TMC_USERNAME=ao-username
+TMC_PASSWORD=ao-password
+NONPROD_USERNAME=non-ao-username
+NONPROD_PASSWORD=non-ao-password
+# ===END_CREDENTIALS===
+
+# ===SUPERVISORS===
+prod-1=supvr-prod-1.example.com
+prod-2=supvr-prod-2.example.com
+# ===END_SUPERVISORS===
+
 prod-workload-01
 prod-workload-02
 uat-system-01
 ```
+
+**Credential priority**: Environment variable > input.conf > interactive prompt.
 
 ### Cluster Naming Convention
 

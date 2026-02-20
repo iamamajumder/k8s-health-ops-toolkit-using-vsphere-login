@@ -15,21 +15,6 @@ if [ -z "${COMMON_LIB_LOADED:-}" ]; then
 fi
 
 #===============================================================================
-# Configuration - Supervisor Cluster IP/FQDN Mapping
-#===============================================================================
-# User must update these with actual Supervisor cluster IPs or FQDNs
-declare -A SUPERVISOR_IP_MAP=(
-    ["prod-1"]="supvr-w11c1-prod-1.k8s.ntrs.com"
-    ["prod-2"]="supvr-w11c1-prod-2.k8s.ntrs.com"
-    ["prod-3"]="supvr-w11c2-prod-3.k8s.ntrs.com"
-    ["prod-4"]="supvr-w11c2-prod-4.k8s.ntrs.com"
-    ["system-1"]="supvr-w10c1-system-1.k8s.ntrs.com"
-    ["system-3"]="supvr-w10c2-system-3.k8s.ntrs.com"
-    ["uat-2"]="supvr-w10c1-uat-2.k8s.ntrs.com"
-    ["uat-4"]="supvr-w10c2-uat-4.k8s.ntrs.com"
-)
-
-#===============================================================================
 # Helper Functions
 #===============================================================================
 
@@ -257,15 +242,19 @@ vsphere_workload_login() {
 #===============================================================================
 
 # Public entry point - orchestrates the full vSphere login flow
-# Usage: run_vsphere_login "cluster1\ncluster2\ncluster3"
+# Usage: run_vsphere_login "cluster1\ncluster2\ncluster3" [config_file]
 run_vsphere_login() {
     local cluster_list="$1"
+    local config_file="${2:-}"
 
     # Skip if no clusters provided
     if [[ -z "${cluster_list}" ]]; then
         info "[vSphere] No clusters provided, skipping"
         return 0
     fi
+
+    # Load supervisor IP map from config file
+    load_supervisor_map "${config_file}"
 
     # Reset KUBECONFIG to default (~/.kube/config) so vsphere login operations
     # don't conflict with TMC-managed kubeconfig files from main script operations

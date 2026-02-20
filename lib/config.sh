@@ -28,6 +28,7 @@ parse_config() {
 }
 
 # Get cluster list from config file
+# Skips comments, empty lines, and lines between ===SUPERVISORS=== / ===CREDENTIALS=== markers
 get_cluster_list() {
     local config_file="$1"
 
@@ -36,13 +37,30 @@ get_cluster_list() {
     fi
 
     # Extract cluster names (one per line)
-    # Ignore comments and empty lines
-    # Trim whitespace
-    grep -v '^#' "${config_file}" | grep -v '^[[:space:]]*$' | while read -r cluster_name; do
-        # Trim leading and trailing whitespace
-        cluster_name=$(echo "${cluster_name}" | xargs)
+    # Ignore comments, empty lines, supervisor mapping section, and credentials section
+    local in_section=false
+    while IFS= read -r line; do
+        # Track section markers (supervisors and credentials)
+        if [[ "${line}" =~ ===SUPERVISORS=== ]] || [[ "${line}" =~ ===CREDENTIALS=== ]]; then
+            in_section=true
+            continue
+        fi
+        if [[ "${line}" =~ ===END_SUPERVISORS=== ]] || [[ "${line}" =~ ===END_CREDENTIALS=== ]]; then
+            in_section=false
+            continue
+        fi
+        # Skip lines inside sections
+        if [[ "${in_section}" == "true" ]]; then
+            continue
+        fi
+        # Skip comments and empty lines
+        [[ "${line}" =~ ^# ]] && continue
+        [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
+        # Trim whitespace
+        local cluster_name
+        cluster_name=$(echo "${line}" | xargs)
         echo "${cluster_name}"
-    done
+    done < "${config_file}"
 }
 
 # Validate configuration file exists and has content
@@ -59,9 +77,9 @@ validate_config_file() {
         return 1
     fi
 
-    # Check if file has at least one non-empty, non-comment line
+    # Check if file has at least one valid cluster name (excluding supervisor section)
     local cluster_count
-    cluster_count=$(grep -v '^#' "${config_file}" | grep -v '^[[:space:]]*$' | wc -l | tr -d ' ')
+    cluster_count=$(get_cluster_list "${config_file}" | wc -l | tr -d ' ')
 
     if [[ "${cluster_count}" -eq 0 ]]; then
         error "Configuration file contains no valid cluster names"
@@ -142,6 +160,150 @@ display_cluster_list() {
 }
 
 #===============================================================================
+# Credentials Loading (from input.conf)
+#===============================================================================
+
+# Load credentials from config file's ===CREDENTIALS=== section
+# Sets env vars only if not already set (env var takes priority)
+# Key mapping:
+#   TMC_USERNAME       → TMC_SELF_MANAGED_USERNAME
+#   TMC_PASSWORD       → TMC_SELF_MANAGED_PASSWORD
+#   NONPROD_USERNAME   → VSPHERE_NONPROD_USERNAME
+#   NONPROD_PASSWORD   → VSPHERE_NONPROD_PASSWORD
+load_credentials() {
+    local config_file="$1"
+
+    if [[ -z "${config_file}" || ! -f "${config_file}" ]]; then
+        debug "No config file for credentials loading, will use env vars or prompts"
+        return 0
+    fi
+
+    local in_credentials=false
+    local loaded=0
+    while IFS= read -r line; do
+        if [[ "${line}" =~ ===CREDENTIALS=== ]]; then
+            in_credentials=true
+            continue
+        fi
+        if [[ "${line}" =~ ===END_CREDENTIALS=== ]]; then
+            in_credentials=false
+            continue
+        fi
+        if [[ "${in_credentials}" == "true" ]]; then
+            # Skip comments and empty lines
+            [[ "${line}" =~ ^# ]] && continue
+            [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
+            # Parse key=value
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            key=$(echo "${key}" | xargs)
+            value=$(echo "${value}" | xargs)
+            [[ -z "${key}" || -z "${value}" ]] && continue
+
+            # Map config keys to env var names, set only if not already set
+            case "${key}" in
+                TMC_USERNAME)
+                    if [[ -z "${TMC_SELF_MANAGED_USERNAME:-}" ]]; then
+                        export TMC_SELF_MANAGED_USERNAME="${value}"
+                        loaded=$((loaded + 1))
+                    else
+                        debug "TMC_SELF_MANAGED_USERNAME already set via env var, skipping input.conf value"
+                    fi
+                    ;;
+                TMC_PASSWORD)
+                    if [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
+                        export TMC_SELF_MANAGED_PASSWORD="${value}"
+                        loaded=$((loaded + 1))
+                    else
+                        debug "TMC_SELF_MANAGED_PASSWORD already set via env var, skipping input.conf value"
+                    fi
+                    ;;
+                NONPROD_USERNAME)
+                    if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" ]]; then
+                        export VSPHERE_NONPROD_USERNAME="${value}"
+                        loaded=$((loaded + 1))
+                    else
+                        debug "VSPHERE_NONPROD_USERNAME already set via env var, skipping input.conf value"
+                    fi
+                    ;;
+                NONPROD_PASSWORD)
+                    if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
+                        export VSPHERE_NONPROD_PASSWORD="${value}"
+                        loaded=$((loaded + 1))
+                    else
+                        debug "VSPHERE_NONPROD_PASSWORD already set via env var, skipping input.conf value"
+                    fi
+                    ;;
+                *)
+                    debug "Unknown credential key in input.conf: ${key}"
+                    ;;
+            esac
+        fi
+    done < "${config_file}"
+
+    if [[ ${loaded} -gt 0 ]]; then
+        debug "Loaded ${loaded} credential(s) from input.conf"
+    fi
+
+    return 0
+}
+
+#===============================================================================
+# Supervisor IP Mapping (loaded from input.conf)
+#===============================================================================
+
+# Load supervisor IP map from config file
+# Parses lines between ===SUPERVISORS=== and ===END_SUPERVISORS=== markers
+# Populates global SUPERVISOR_IP_MAP associative array
+load_supervisor_map() {
+    local config_file="$1"
+
+    # Initialize empty map
+    unset SUPERVISOR_IP_MAP 2>/dev/null
+    declare -gA SUPERVISOR_IP_MAP
+
+    if [[ -z "${config_file}" || ! -f "${config_file}" ]]; then
+        warning "No config file provided for supervisor map, vSphere login may be limited"
+        return 0
+    fi
+
+    local in_supervisors=false
+    local count=0
+    while IFS= read -r line; do
+        if [[ "${line}" =~ ===SUPERVISORS=== ]]; then
+            in_supervisors=true
+            continue
+        fi
+        if [[ "${line}" =~ ===END_SUPERVISORS=== ]]; then
+            in_supervisors=false
+            continue
+        fi
+        if [[ "${in_supervisors}" == "true" ]]; then
+            # Skip comments and empty lines within section
+            [[ "${line}" =~ ^# ]] && continue
+            [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
+            # Parse key=value
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            key=$(echo "${key}" | xargs)
+            value=$(echo "${value}" | xargs)
+            if [[ -n "${key}" && -n "${value}" ]]; then
+                SUPERVISOR_IP_MAP["${key}"]="${value}"
+                count=$((count + 1))
+            fi
+        fi
+    done < "${config_file}"
+
+    if [[ ${count} -eq 0 ]]; then
+        info "No supervisor mappings found in ${config_file}"
+    else
+        debug "Loaded ${count} supervisor mapping(s) from ${config_file}"
+    fi
+
+    return 0
+}
+
+#===============================================================================
 # Management Cluster Discovery Functions (v3.5)
 #===============================================================================
 
@@ -203,12 +365,14 @@ count_clusters_from_list() {
 
 export -f parse_config
 export -f get_cluster_list
+export -f load_credentials
 export -f validate_config_file
 export -f validate_cluster_format
 export -f load_configuration
 export -f display_configuration
 export -f count_clusters
 export -f display_cluster_list
+export -f load_supervisor_map
 export -f get_cluster_list_from_management
 export -f validate_management_environment
 export -f count_clusters_from_list

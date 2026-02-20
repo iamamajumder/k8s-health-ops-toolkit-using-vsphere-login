@@ -4,6 +4,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| [v4.3](#version-43-2026-02-20) | 2026-02-20 | Unified config — rename clusters.conf → input.conf, centralized credentials |
 | [v4.0.1](#version-401-2026-02-07) | 2026-02-07 | Bug fix - Parallel execution race condition & missing comparison reports |
 | [v4.0](#version-40-2026-02-06) | 2026-02-06 | Documentation overhaul - README-DEV.md beautification |
 | [v3.8](#version-38-2026-02-05) | 2026-02-05 | Codebase refactoring (~455 lines removed) |
@@ -16,6 +17,52 @@
 | [v3.2](#version-32-2026-01-28) | 2026-01-28 | Enhanced health summary, PRE vs POST comparison |
 | [v3.1](#version-31-2025-01-22) | 2025-01-22 | Auto-discovery, auto-context, unified execution |
 | [v3.0](#version-30-initial-release) | Initial | Basic health check functionality |
+
+---
+
+## Version 4.3 (2026-02-20)
+
+**Summary:** Unified configuration — renamed `clusters.conf` to `input.conf` and added a centralized credentials section. All runtime configuration (credentials, supervisor mappings, cluster names) now lives in a single file.
+
+### New Features
+
+| Component | Change |
+|-----------|--------|
+| `input.conf` | New `===CREDENTIALS===` section for TMC and vSphere credentials |
+| `lib/config.sh` | New `load_credentials()` function parses credentials from input.conf |
+| All scripts | Credentials loaded early in execution, before TMC context setup |
+
+### Credential Priority
+
+1. **Environment variable** (highest — supports CI/CD automation)
+2. **input.conf** `[credentials]` section (new)
+3. **Interactive prompt** (fallback)
+
+### Credential Key Mapping
+
+| input.conf Key | Environment Variable |
+|----------------|---------------------|
+| `TMC_USERNAME` | `TMC_SELF_MANAGED_USERNAME` |
+| `TMC_PASSWORD` | `TMC_SELF_MANAGED_PASSWORD` |
+| `NONPROD_USERNAME` | `VSPHERE_NONPROD_USERNAME` |
+| `NONPROD_PASSWORD` | `VSPHERE_NONPROD_PASSWORD` |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `clusters.conf` → `input.conf` | Git rename + added `[credentials]` section |
+| `lib/config.sh` | Added `load_credentials()`, updated `get_cluster_list()` to skip credentials section |
+| `k8s-health-check.sh` | Renamed refs, call `load_credentials()` in `main()` |
+| `k8s-cluster-upgrade.sh` | Renamed refs, call `load_credentials()` in `main()` |
+| `k8s-ops-cmd.sh` | Renamed refs + `DEFAULT_CONFIG`, call `load_credentials()` in `run_ops_command()` |
+| `lib/tmc.sh` | Updated comment |
+| `CLAUDE.md`, `README.md`, `README-DEV.md` | Updated docs with new format and credentials section examples |
+
+### Breaking Changes
+
+- **Config file renamed**: `clusters.conf` → `input.conf`. Users must rename their existing file or update any scripts/aliases that reference the old name.
+- No changes to the `[supervisors]` section format or cluster name format.
 
 ---
 

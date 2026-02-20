@@ -37,8 +37,8 @@ vi lib/vsphere-login.sh
 # Update SUPERVISOR_IP_MAP with actual Supervisor cluster IPs/FQDNs
 
 # 3. Create cluster list
-echo "prod-workload-01" > clusters.conf
-echo "prod-workload-02" >> clusters.conf
+echo "prod-workload-01" > input.conf
+echo "prod-workload-02" >> input.conf
 
 # 4. Make scripts executable
 chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
@@ -77,7 +77,7 @@ Captures comprehensive cluster state before and after changes. Runs 18 health ch
 | Option | Description |
 |--------|-------------|
 | `--mode pre\|post` | Check mode (required) |
-| `-c, --cluster NAME` | Single cluster (no clusters.conf needed) |
+| `-c, --cluster NAME` | Single cluster (no input.conf needed) |
 | `--sequential` | One cluster at a time (default: parallel) |
 | `--batch-size N` | Clusters per parallel batch (default: 6) |
 | `--cache-status` | Show cache status |
@@ -98,7 +98,7 @@ Captures comprehensive cluster state before and after changes. Runs 18 health ch
 Orchestrates cluster upgrades with PRE/POST health checks and progress monitoring.
 
 ```bash
-# Default: Use ./clusters.conf (sequential)
+# Default: Use ./input.conf (sequential)
 ./k8s-cluster-upgrade.sh
 
 # Single cluster upgrade
@@ -491,7 +491,7 @@ DEBUG=on ./k8s-health-check.sh --mode pre 2>&1 | tee debug.log
 | Flag | Description |
 |------|-------------|
 | `--mode pre\|post` | Required: Check mode |
-| `-c, --cluster` | Single cluster (no clusters.conf needed) |
+| `-c, --cluster` | Single cluster (no input.conf needed) |
 | `--sequential` | One at a time (default: parallel) |
 | `--batch-size N` | Clusters per batch (default: 6) |
 | `--cache-status` | Show cache status |

@@ -26,7 +26,7 @@
 #
 # Usage:
 #   ./k8s-cluster-upgrade.sh -c cluster-name          # Single cluster
-#   ./k8s-cluster-upgrade.sh ./clusters.conf          # Multiple clusters (sequential)
+#   ./k8s-cluster-upgrade.sh ./input.conf          # Multiple clusters (sequential)
 #   ./k8s-cluster-upgrade.sh --parallel               # Parallel batch upgrades
 #   ./k8s-cluster-upgrade.sh -c cluster --timeout-multiplier 10
 ################################################################################
@@ -62,14 +62,14 @@ Kubernetes Cluster Upgrade Script (v${VERSION})
 Simple orchestration script that coordinates PRE/POST health checks and upgrades.
 
 USAGE:
-    $0                                  # Use default ./clusters.conf (sequential)
+    $0                                  # Use default ./input.conf (sequential)
     $0 -c CLUSTER_NAME [OPTIONS]        # Single cluster upgrade
     $0 CONFIG_FILE [OPTIONS]            # Multiple clusters upgrade (sequential)
     $0 --parallel [OPTIONS]             # Parallel batch upgrades (default batch: 6)
     $0 --help                           # Show this help
 
 MODES:
-    (no arguments)                      Use default ./clusters.conf file
+    (no arguments)                      Use default ./input.conf file
     -c CLUSTER_NAME                     Upgrade a single cluster
     CONFIG_FILE                         Upgrade multiple clusters from config file
 
@@ -102,14 +102,14 @@ TIMEOUT:
     Example: 5-node cluster = 25 minute timeout
 
 EXAMPLES:
-    # Default: Use ./clusters.conf (sequential)
+    # Default: Use ./input.conf (sequential)
     $0
 
     # Single cluster upgrade
     $0 -c prod-workload-01
 
     # Multiple clusters with custom config
-    $0 ./my-clusters.conf
+    $0 ./my-input.conf
 
     # Parallel batch upgrades (6 at a time)
     $0 --parallel
@@ -118,7 +118,7 @@ EXAMPLES:
     $0 --parallel --batch-size 3
 
     # Parallel with custom config
-    $0 --parallel ./my-clusters.conf
+    $0 --parallel ./my-input.conf
 
     # Custom timeout (10 minutes per node)
     $0 -c uat-system-01 --timeout-multiplier 10
@@ -167,7 +167,7 @@ run_pre_health_check() {
     progress "Running PRE-upgrade health check for ${cluster_name}..."
     echo ""
 
-    # Create temporary clusters.conf with single cluster
+    # Create temporary input.conf with single cluster
     local temp_config=$(mktemp)
     echo "${cluster_name}" > "${temp_config}"
 
@@ -657,7 +657,7 @@ run_post_health_check() {
     progress "Running POST-upgrade health check for ${cluster_name}..."
     echo ""
 
-    # Create temporary clusters.conf with single cluster
+    # Create temporary input.conf with single cluster
     local temp_config=$(mktemp)
     echo "${cluster_name}" > "${temp_config}"
 
@@ -1422,9 +1422,9 @@ parse_arguments() {
         esac
     done
 
-    # Default to ./clusters.conf if no arguments provided (for multi-cluster modes)
+    # Default to ./input.conf if no arguments provided (for multi-cluster modes)
     if [[ -z "${SINGLE_CLUSTER}" && -z "${CONFIG_FILE}" ]]; then
-        CONFIG_FILE="./clusters.conf"
+        CONFIG_FILE="./input.conf"
         progress "No arguments provided, defaulting to ${CONFIG_FILE}"
     fi
 
@@ -1456,6 +1456,11 @@ main() {
     # Parse arguments
     parse_arguments "$@"
 
+    # Load credentials from config file (env vars take priority)
+    if [[ -n "${CONFIG_FILE}" ]]; then
+        load_credentials "${CONFIG_FILE}"
+    fi
+
     # Execute appropriate mode
     local rc=0
     local vsphere_cluster_list=""
@@ -1476,7 +1481,7 @@ main() {
     fi
 
     # Run vSphere login at the end (synchronous)
-    run_vsphere_login "${vsphere_cluster_list}"
+    run_vsphere_login "${vsphere_cluster_list}" "${CONFIG_FILE}"
 
     exit ${rc}
 }

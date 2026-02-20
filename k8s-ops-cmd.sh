@@ -1,7 +1,7 @@
 #!/bin/bash
 #===============================================================================
 # Kubernetes Multi-Cluster Ops Command Script v3.8
-# Purpose: Execute the same command across all clusters in clusters.conf
+# Purpose: Execute the same command across all clusters in input.conf
 #          or dynamically discover clusters from TMC management cluster
 #          with proper TMC context/kubeconfig setup and parallel execution
 # v3.8: Fixed credential prompts for -c flag, migrated to new output directory structure
@@ -28,7 +28,7 @@ source "${SCRIPT_DIR}/lib/vsphere-login.sh"
 #===============================================================================
 
 DEFAULT_TIMEOUT=30          # Default command timeout in seconds
-DEFAULT_CONFIG="./clusters.conf"
+DEFAULT_CONFIG="./input.conf"
 BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
 SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
@@ -42,28 +42,28 @@ show_usage() {
 Kubernetes Multi-Cluster Ops Command Script v3.8
 
 Usage:
-  $0 [OPTIONS] "<command>" [clusters.conf]
+  $0 [OPTIONS] "<command>" [input.conf]
   $0 -c <cluster> [OPTIONS] "<command>"
   $0 -m <environment> [OPTIONS] "<command>"
 
 Description:
-  Execute the same command across all clusters defined in clusters.conf.
+  Execute the same command across all clusters defined in input.conf.
   Or dynamically discover clusters from a TMC management cluster.
   Commands run in parallel batches of 6 by default for faster execution.
 
 Arguments:
   <command>         The command to execute on each cluster (required)
                     The command runs with KUBECONFIG set for each cluster
-  clusters.conf     Path to configuration file with cluster names (one per line)
-                    Default: ./clusters.conf
+  input.conf     Path to configuration file with cluster names (one per line)
+                    Default: ./input.conf
 
 Options:
   -h, --help                       Show this help message
-  -c, --cluster <name>             Run command on a single cluster (no clusters.conf needed)
-                                   Mutually exclusive with -m and clusters.conf
+  -c, --cluster <name>             Run command on a single cluster (no input.conf needed)
+                                   Mutually exclusive with -m and input.conf
   -m, --management-cluster <env>   Discover clusters from management cluster
                                    Environment: prod-1, prod-2, uat-2, system-3
-                                   Mutually exclusive with -c and clusters.conf
+                                   Mutually exclusive with -c and input.conf
   --timeout <sec>                  Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
   --sequential                     Run commands sequentially instead of parallel
   --batch-size N                   Number of clusters to process in parallel (default: 6)
@@ -90,7 +90,7 @@ Examples (File-based mode):
   $0 "kubectl version --short 2>/dev/null | grep Server"
 
   # With custom config and timeout
-  $0 --timeout 60 "kubectl get pods -A" ./my-clusters.conf
+  $0 --timeout 60 "kubectl get pods -A" ./my-input.conf
 
   # Custom batch size (10 clusters at a time)
   $0 --batch-size 10 "kubectl get nodes"
@@ -572,6 +572,9 @@ run_ops_command() {
     local cluster_count=0
     local source_description=""
 
+    # Load credentials from config file (env vars take priority)
+    load_credentials "${config_file}"
+
     # Management cluster discovery mode
     if [[ -n "${mgmt_env}" ]]; then
         # Validate environment format
@@ -709,7 +712,7 @@ run_ops_command() {
     echo ""
 
     # Run vSphere login at the end (synchronous)
-    run_vsphere_login "${cluster_list}"
+    run_vsphere_login "${cluster_list}" "${config_file}"
 }
 
 #===============================================================================

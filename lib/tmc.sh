@@ -488,7 +488,7 @@ discover_clusters_by_management() {
 #===============================================================================
 
 # Prepare TMC contexts for all clusters (Sequential - to avoid race conditions)
-# Usage: prepare_tmc_contexts "clusters.conf"
+# Usage: prepare_tmc_contexts "input.conf"
 prepare_tmc_contexts() {
     local config_file="$1"
 

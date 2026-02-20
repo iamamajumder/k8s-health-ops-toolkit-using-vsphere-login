@@ -82,8 +82,8 @@ show_usage() {
 Kubernetes Cluster Health Check (Unified Script v3.4)
 
 Usage:
-  PRE-change:   $0 --mode pre [options] [clusters.conf]
-  POST-change:  $0 --mode post [options] [clusters.conf] [pre-results-dir]
+  PRE-change:   $0 --mode pre [options] [input.conf]
+  POST-change:  $0 --mode post [options] [input.conf] [pre-results-dir]
   Single:       $0 --mode pre -c CLUSTER_NAME [options]
 
 Modes:
@@ -91,12 +91,12 @@ Modes:
   --mode post   Run POST-change health check (compare with PRE results)
 
 Arguments:
-  clusters.conf     Path to configuration file with cluster names (one per line)
-                    Default: ./clusters.conf
+  input.conf        Path to configuration file with cluster names (one per line)
+                    Default: ./input.conf
   pre-results-dir   (POST mode only) Path to PRE-change results directory
                     Default: <script-dir>/output/
 
-Example clusters.conf:
+Example input.conf:
   prod-workload-01
   prod-workload-02
   uat-system-01
@@ -122,7 +122,7 @@ Environment Variables:
 Options:
   -h, --help           Show this help message
   --mode pre|post      Specify check mode (required)
-  -c, --cluster NAME   Run health check on a single cluster (no clusters.conf needed)
+  -c, --cluster NAME   Run health check on a single cluster (no input.conf needed)
   --sequential         Run health checks one at a time (default: parallel)
   --batch-size N       Number of clusters to process in parallel (default: 6)
   --cache-status       Show cache status
@@ -131,11 +131,11 @@ Options:
 Examples:
   # PRE-change health check (parallel by default, 6 clusters at a time)
   $0 --mode pre
-  $0 --mode pre ./clusters.conf
+  $0 --mode pre ./input.conf
 
   # POST-change health check (parallel by default)
   $0 --mode post
-  $0 --mode post ./clusters.conf <script-dir>/output
+  $0 --mode post ./input.conf <script-dir>/output
 
   # Sequential execution (one cluster at a time)
   $0 --mode pre --sequential
@@ -144,7 +144,7 @@ Examples:
   # Custom batch size (10 clusters at a time)
   $0 --mode pre --batch-size 10
 
-  # Single cluster health check (no clusters.conf needed)
+  # Single cluster health check (no input.conf needed)
   $0 --mode pre -c prod-workload-01
   $0 --mode post -c prod-workload-01
 
@@ -980,7 +980,7 @@ run_health_checks() {
 #===============================================================================
 
 parse_arguments() {
-    local config_file="./clusters.conf"
+    local config_file="./input.conf"
     local pre_results_dir=""
 
     # Parse named arguments first
@@ -1102,7 +1102,7 @@ parse_arguments() {
             # Two arguments - detect which is which
             if [[ -d "$1" ]]; then
                 pre_results_dir="$1"
-                config_file="${2:-./clusters.conf}"
+                config_file="${2:-./input.conf}"
             elif [[ -d "$2" ]]; then
                 config_file="$1"
                 pre_results_dir="$2"
@@ -1116,9 +1116,9 @@ parse_arguments() {
     # Validate config file exists
     if [[ ! -f "${config_file}" ]]; then
         error "Configuration file not found: ${config_file}"
-        if [[ "$config_file" == "./clusters.conf" ]]; then
-            error "Create a clusters.conf file with cluster names (one per line)"
-            error "Or specify a config file: $0 --mode ${CHECK_MODE} <clusters.conf>"
+        if [[ "$config_file" == "./input.conf" ]]; then
+            error "Create an input.conf file with cluster names (one per line)"
+            error "Or specify a config file: $0 --mode ${CHECK_MODE} <input.conf>"
         fi
         exit 1
     fi
@@ -1139,12 +1139,15 @@ main() {
     # Parse arguments
     parse_arguments "$@"
 
+    # Load credentials from config file (env vars take priority)
+    load_credentials "${CONFIG_FILE}"
+
     # Run health checks
     run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}" "${PARALLEL_MODE}" "${BATCH_SIZE}"
 
     # Run vSphere login at the end (synchronous)
     local cluster_list=$(get_cluster_list "${CONFIG_FILE}")
-    run_vsphere_login "${cluster_list}"
+    run_vsphere_login "${cluster_list}" "${CONFIG_FILE}"
 }
 
 main "$@"
