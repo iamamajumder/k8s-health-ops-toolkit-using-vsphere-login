@@ -142,13 +142,16 @@ vsphere_supervisor_login() {
     local login_output
     local exit_code
 
-    # Pipe password via stdin instead of --vsphere-password flag
-    # The --vsphere-password flag returns exit 0 but may not store valid tokens in kubeconfig
-    login_output=$(echo "${password}" | kubectl vsphere login \
+    # Use KUBECTL_VSPHERE_PASSWORD env var for non-interactive login
+    # kubectl vsphere login reads password from TTY, not stdin — piping doesn't work
+    local login_output
+    local exit_code
+
+    login_output=$(KUBECTL_VSPHERE_PASSWORD="${password}" kubectl vsphere login \
         --server "${supervisor_ip}" \
         --vsphere-username "${username}" \
         --insecure-skip-tls-verify 2>&1) || true
-    exit_code=${PIPESTATUS[1]}
+    exit_code=$?
 
     info "[vSphere]   Login output: ${login_output}"
 
@@ -214,14 +217,18 @@ vsphere_workload_login() {
     local login_output
     local exit_code
 
-    # Pipe password via stdin instead of --vsphere-password flag
-    login_output=$(echo "${password}" | kubectl vsphere login \
+    # Use KUBECTL_VSPHERE_PASSWORD env var for non-interactive login
+    # kubectl vsphere login reads password from TTY, not stdin — piping doesn't work
+    local login_output
+    local exit_code
+
+    login_output=$(KUBECTL_VSPHERE_PASSWORD="${password}" kubectl vsphere login \
         --server "${supervisor_ip}" \
         --vsphere-username "${username}" \
         --tanzu-kubernetes-cluster-name "${cluster_name}" \
         --tanzu-kubernetes-cluster-namespace "${namespace}" \
         --insecure-skip-tls-verify 2>&1) || true
-    exit_code=${PIPESTATUS[1]}
+    exit_code=$?
 
     info "[vSphere]   Login output: ${login_output}"
 
