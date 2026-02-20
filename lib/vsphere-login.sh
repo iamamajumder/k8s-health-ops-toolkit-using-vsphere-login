@@ -154,25 +154,27 @@ vsphere_supervisor_login() {
     info "[vSphere]   Supervisor login: ${suffix} (server=${supervisor_ip}, user=${username})"
     info "[vSphere]   Running: kubectl vsphere login --server ${supervisor_ip} --vsphere-username ${username} --insecure-skip-tls-verify"
 
-    local error_output
-    error_output=$(mktemp)
+    local login_output
+    local exit_code
 
-    if kubectl vsphere login \
+    # Pipe password via stdin instead of --vsphere-password flag
+    # The --vsphere-password flag returns exit 0 but may not store valid tokens in kubeconfig
+    login_output=$(echo "${password}" | kubectl vsphere login \
         --server "${supervisor_ip}" \
         --vsphere-username "${username}" \
-        --vsphere-password "${password}" \
-        --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
+        --insecure-skip-tls-verify 2>&1) || true
+    exit_code=${PIPESTATUS[1]}
+
+    info "[vSphere]   Login output: ${login_output}"
+
+    if [[ ${exit_code} -eq 0 ]] && echo "${login_output}" | grep -qi "logged in successfully"; then
         echo -e "${GREEN}[vSphere Login]${NC} Supervisor ${suffix}: login successful"
-        rm -f "${error_output}"
         return 0
     else
-        local exit_code=$?
-        local error_msg=$(cat "${error_output}")
         echo -e "${RED}[vSphere Login]${NC} Supervisor ${suffix}: login failed (exit code: ${exit_code})"
-        if [[ -n "${error_msg}" ]]; then
-            echo -e "${RED}[vSphere Login]${NC}   stderr: ${error_msg}"
+        if [[ -n "${login_output}" ]]; then
+            echo -e "${RED}[vSphere Login]${NC}   output: ${login_output}"
         fi
-        rm -f "${error_output}"
         return 1
     fi
 }
@@ -224,27 +226,28 @@ vsphere_workload_login() {
     info "[vSphere]   Workload login: ${cluster_name} (server=${supervisor_ip}, ns=${namespace}, user=${username})"
     info "[vSphere]   Running: kubectl vsphere login --server ${supervisor_ip} --vsphere-username ${username} --tanzu-kubernetes-cluster-name ${cluster_name} --tanzu-kubernetes-cluster-namespace ${namespace} --insecure-skip-tls-verify"
 
-    local error_output
-    error_output=$(mktemp)
+    local login_output
+    local exit_code
 
-    if kubectl vsphere login \
+    # Pipe password via stdin instead of --vsphere-password flag
+    login_output=$(echo "${password}" | kubectl vsphere login \
         --server "${supervisor_ip}" \
         --vsphere-username "${username}" \
-        --vsphere-password "${password}" \
         --tanzu-kubernetes-cluster-name "${cluster_name}" \
         --tanzu-kubernetes-cluster-namespace "${namespace}" \
-        --insecure-skip-tls-verify >/dev/null 2>"${error_output}"; then
+        --insecure-skip-tls-verify 2>&1) || true
+    exit_code=${PIPESTATUS[1]}
+
+    info "[vSphere]   Login output: ${login_output}"
+
+    if [[ ${exit_code} -eq 0 ]] && echo "${login_output}" | grep -qi "logged in successfully"; then
         echo -e "${GREEN}[vSphere Login]${NC} ${cluster_name}: login successful"
-        rm -f "${error_output}"
         return 0
     else
-        local exit_code=$?
-        local error_msg=$(cat "${error_output}")
         echo -e "${RED}[vSphere Login]${NC} ${cluster_name}: login failed (exit code: ${exit_code})"
-        if [[ -n "${error_msg}" ]]; then
-            echo -e "${RED}[vSphere Login]${NC}   stderr: ${error_msg}"
+        if [[ -n "${login_output}" ]]; then
+            echo -e "${RED}[vSphere Login]${NC}   output: ${login_output}"
         fi
-        rm -f "${error_output}"
         return 1
     fi
 }
