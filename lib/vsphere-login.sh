@@ -359,6 +359,12 @@ ${cluster_name}"
             continue
         fi
 
+        # Explicitly switch to supervisor context to ensure kubectl targets the right cluster
+        info "[vSphere]   Switching kubectl context to supervisor: ${supervisor_ip}"
+        if ! kubectl config use-context "${supervisor_ip}" >/dev/null 2>&1; then
+            warning "[vSphere] Failed to switch context to ${supervisor_ip}"
+        fi
+
         # Discover workload cluster namespaces from supervisor
         info "[vSphere]   Discovering workload cluster namespaces..."
         local namespace_data
