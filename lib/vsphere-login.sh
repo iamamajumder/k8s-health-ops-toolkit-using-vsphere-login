@@ -264,10 +264,17 @@ run_vsphere_login() {
         return 0
     fi
 
+    # Reset KUBECONFIG to default (~/.kube/config) so vsphere login operations
+    # don't conflict with TMC-managed kubeconfig files from main script operations
+    local saved_kubeconfig="${KUBECONFIG:-}"
+    unset KUBECONFIG
+    info "[vSphere] Reset KUBECONFIG to default (~/.kube/config)"
+
     # Check if kubectl vsphere plugin is available
     info "[vSphere] Checking kubectl vsphere plugin..."
     if ! kubectl vsphere version >/dev/null 2>&1; then
         info "[vSphere] kubectl vsphere plugin not available, skipping"
+        [[ -n "${saved_kubeconfig}" ]] && export KUBECONFIG="${saved_kubeconfig}"
         return 0
     fi
     info "[vSphere] kubectl vsphere plugin: available"
@@ -285,6 +292,7 @@ run_vsphere_login() {
     # Step 1: Collect all credentials upfront
     if ! ensure_vsphere_credentials "${cluster_list}"; then
         warning "[vSphere] Credentials not available, skipping vSphere login"
+        [[ -n "${saved_kubeconfig}" ]] && export KUBECONFIG="${saved_kubeconfig}"
         return 0
     fi
 
@@ -385,18 +393,6 @@ ${cluster_name}"
             fi
 
             if [[ -z "${namespace}" ]]; then
-                # Fallback: try to get provisioner from TMC metadata cache
-                info "[vSphere]   Fallback: trying TMC metadata cache (discover_cluster_metadata)..."
-                local metadata
-                if metadata=$(discover_cluster_metadata "${cluster_name}" 2>/dev/null); then
-                    namespace=$(echo "${metadata}" | cut -d'|' -f2 | tr -d ' \n\r\t')
-                    info "[vSphere]   TMC metadata result: '${metadata}', extracted namespace: '${namespace}'"
-                else
-                    info "[vSphere]   TMC metadata lookup failed for ${cluster_name}"
-                fi
-            fi
-
-            if [[ -z "${namespace}" ]]; then
                 warning "[vSphere] Cannot determine namespace for ${cluster_name}, skipping"
                 login_failed=$((login_failed + 1))
                 continue
@@ -437,6 +433,12 @@ ${cluster_name}"
     info "[vSphere] Step 4: Complete"
     echo -e "${CYAN}vSphere Login Summary:${NC} ${GREEN}${login_success} successful${NC}, ${RED}${login_failed} failed${NC}"
     echo ""
+
+    # Restore original KUBECONFIG if it was set
+    if [[ -n "${saved_kubeconfig}" ]]; then
+        export KUBECONFIG="${saved_kubeconfig}"
+        info "[vSphere] Restored KUBECONFIG to: ${saved_kubeconfig}"
+    fi
 
     return 0
 }
