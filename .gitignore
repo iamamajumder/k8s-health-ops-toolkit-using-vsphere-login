@@ -20,7 +20,7 @@ kubeconfig_*
 *.secret
 *.key
 *.pem
-
+/home/home01/awm61/k8s-health-ops-toolkit/input.conf
 # Environment Variables
 .env
 .env.local
