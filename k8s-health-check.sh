@@ -1,8 +1,7 @@
 #!/bin/bash
 #===============================================================================
 # Kubernetes Cluster Health Check - Unified Script v3.4
-# Environment: VMware Cloud Foundation 5.2.1 (vSphere 8.x, NSX 4.x)
-#              VKS 3.3.3, VKR 1.28.x/1.29.x
+# Compatible:  Kubernetes 1.28–1.35 (VMware VKS/VKR environments)
 # Purpose: Capture cluster state before/after upgrades/changes
 #          Auto-discovers cluster metadata from TMC
 #          Auto-creates TMC contexts based on cluster naming patterns
@@ -241,6 +240,11 @@ process_cluster() {
     # New timestamped filename
     local report_file="${cluster_output_dir}/${mode}-hcr-${timestamp}.txt"
 
+    # Pre-collect metrics BEFORE sections run so Section 18 can use them directly
+    # without making a redundant second set of kubectl API calls.
+    collect_health_metrics
+    calculate_health_status
+
     # Run health check with error handling
     local hc_exit_code=0
     {
@@ -250,10 +254,6 @@ process_cluster() {
     if [ "${hc_exit_code}" -ne 0 ]; then
         warning "Health check completed with exit code ${hc_exit_code} (some commands may have failed)"
     fi
-
-    # Collect health metrics using centralized module
-    collect_health_metrics
-    calculate_health_status
 
     # Generate cluster summary
     local cluster_summary=$(generate_health_summary "${cluster_name}")
@@ -353,15 +353,15 @@ process_cluster_parallel() {
     # Run health check with timestamped filename
     local report_file="${cluster_output_dir}/${mode}-hcr-${timestamp}.txt"
 
+    # Pre-collect metrics BEFORE sections run so Section 18 can use them directly.
+    collect_health_metrics
+    calculate_health_status
+
     # Run health check with error handling
     local hc_exit_code=0
     {
         run_all_health_sections "${mode^^}" "${cluster_name}"
     } > "${report_file}" 2>&1 || hc_exit_code=$?
-
-    # Collect health metrics using centralized module
-    collect_health_metrics
-    calculate_health_status
 
     # POST mode: Generate comparison report
     if [[ "${mode}" == "post" ]] && [[ -n "${pre_results_dir}" ]]; then

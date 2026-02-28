@@ -4,8 +4,7 @@
 
 **Health Check, Upgrade & Multi-Cluster Operations for VMware Tanzu**
 
-[![VMware Kubernetes Service](https://img.shields.io/badge/VKS-3.3.3-blue?style=flat-square)]()
-[![Kubernetes](https://img.shields.io/badge/K8s-1.28--1.32-326CE5?style=flat-square&logo=kubernetes&logoColor=white)]()
+[![Kubernetes](https://img.shields.io/badge/K8s-1.28--1.35-326CE5?style=flat-square&logo=kubernetes&logoColor=white)]()
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Bash](https://img.shields.io/badge/Bash-4.0%2B-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)]()
 [![TMC](https://img.shields.io/badge/TMC-Self--Managed-orange?style=flat-square)]()
@@ -514,16 +513,18 @@ DEBUG=on ./k8s-health-check.sh --mode pre 2>&1 | tee debug.log
 
 See [RELEASE.md](RELEASE.md) for detailed release notes.
 
-| Version | Highlights |
-|---------|------------|
-| **4.2** | Interactive version selection for cluster upgrades, query available versions from TMC, targeted upgrades |
-| **4.1** | vSphere login automation for Supervisor and Workload clusters, synchronous end-of-script execution, dual credential system |
-| **3.8** | Codebase refactoring (~455 lines removed), shared functions, data-driven comparison |
-| **3.7** | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes |
-| **3.6** | Per-cluster output structure, consolidated kubeconfig, automatic cleanup |
-| **3.5** | Management cluster discovery, simplified upgrade script, standardized caching |
-| **3.4** | Parallel batch execution, automated upgrades, multi-cluster ops command |
-| **3.3** | Unified script with `--mode` flag, centralized health module, test suite |
+| Version | Date | Highlights |
+|---------|------|------------|
+| **4.4** | 2026-02-28 | 18-section health check optimization; K8s 1.28–1.35 compatibility; bug fixes |
+| **4.3** | 2026-02-20 | Config refactor: clusters.conf → input.conf, centralized credentials |
+| **4.2** | 2026-02-12 | Interactive version selection for cluster upgrades, query available versions from TMC, targeted upgrades |
+| **4.1** | 2026-02-07 | vSphere login automation for Supervisor and Workload clusters, synchronous end-of-script execution, dual credential system |
+| **3.8** | 2025-12-20 | Codebase refactoring (~455 lines removed), shared functions, data-driven comparison |
+| **3.7** | 2025-11-15 | Parallel upgrades, `-c` flag for health-check/ops-cmd, file retention fixes |
+| **3.6** | 2025-10-01 | Per-cluster output structure, consolidated kubeconfig, automatic cleanup |
+| **3.5** | 2025-08-15 | Management cluster discovery, simplified upgrade script, standardized caching |
+| **3.4** | 2025-07-01 | Parallel batch execution, automated upgrades, multi-cluster ops command |
+| **3.3** | 2025-05-10 | Unified script with `--mode` flag, centralized health module, test suite |
 
 ---
 

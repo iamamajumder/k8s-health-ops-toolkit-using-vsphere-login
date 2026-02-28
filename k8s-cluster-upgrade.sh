@@ -21,7 +21,7 @@
 #
 # v3.8 Fixes:
 #   - Fixed POST health check skipped in parallel mode (proper logging)
-#   - Fixed version matching for VMware suffixes (v1.29.1+vmware.1)
+#   - Fixed version matching for VMware suffixes (e.g. vX.Y.Z+vmware.N)
 #   - Added real-time progress display during parallel monitoring
 #
 # Usage:

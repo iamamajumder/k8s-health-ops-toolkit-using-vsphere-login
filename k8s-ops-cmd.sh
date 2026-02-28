@@ -87,7 +87,7 @@ Examples (File-based mode):
   $0 "kubectl get nodes --no-headers | wc -l"
 
   # Check Kubernetes version
-  $0 "kubectl version --short 2>/dev/null | grep Server"
+  $0 "kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion'"
 
   # With custom config and timeout
   $0 --timeout 60 "kubectl get pods -A" ./my-input.conf
@@ -109,7 +109,7 @@ Examples (Management Discovery mode):
   $0 -m prod-1 --batch-size 10 "kubectl get nodes"
 
   # Management discovery with sequential execution
-  $0 -m system-3 --sequential "kubectl version --short"
+  $0 -m system-3 --sequential "kubectl version -o json | jq -r '.serverVersion.gitVersion'"
 
 Environment Variables:
   TMC_SELF_MANAGED_USERNAME    TMC username (optional, will prompt if not set)

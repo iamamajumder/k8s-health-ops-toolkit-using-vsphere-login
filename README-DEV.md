@@ -2,7 +2,7 @@
 
 **Health Check, Upgrade & Multi-Cluster Operations**
 
-VKS 3.3.3 | Kubernetes 1.28-1.32 | Bash 4.0+ | TMC Self-Managed
+Kubernetes 1.28–1.35 | Bash 4.0+ | TMC Self-Managed (VMware VKS/VKR)
 
 ---
 
@@ -439,6 +439,8 @@ RESULT: FAILED - 2 CRITICAL issue(s), 1 warning(s)
 
 ## 6. Health Check Sections (18)
 
+> **v4.4**: All 18 sections were optimized — capture-then-check patterns, empty-state messages, API call reduction, K8s 1.28–1.35 compatibility fixes, bug fixes for DaemonSet/ReplicaSet awk columns, helm `--failed` empty output, events API deprecation fallbacks, and more.
+
 | # | Section | What It Checks |
 |---|---------|----------------|
 | 1 | Cluster Overview | Date, cluster info, Kubernetes version |
@@ -516,6 +518,27 @@ DEBUG=on ./k8s-health-check.sh --mode pre 2>&1 | tee debug.log
 | `--timeout SEC` | Command timeout (default: 30) |
 | `--sequential` | One at a time (default: parallel) |
 | `--batch-size N` | Clusters per batch (default: 6) |
+
+---
+
+---
+
+## 9. Version History
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| **4.4** | 2026-02-28 | 18-section health check optimization; K8s 1.28–1.35 compatibility; bug fixes |
+| **4.3** | 2026-02-20 | Config refactor: clusters.conf → input.conf, centralized credentials |
+| **4.2** | 2026-02-12 | Interactive version selection for cluster upgrades |
+| **4.1** | 2026-02-07 | vSphere login automation, portable output directory |
+| **3.8** | 2025-12-20 | Codebase refactoring, shared functions, data-driven comparison |
+| **3.7** | 2025-11-15 | Parallel upgrades, `-c` flag, file retention fixes |
+| **3.6** | 2025-10-01 | Per-cluster output structure, consolidated kubeconfig |
+| **3.5** | 2025-08-15 | Management cluster discovery, simplified upgrade script |
+| **3.4** | 2025-07-01 | Parallel batch execution, multi-cluster ops command |
+| **3.3** | 2025-05-10 | Unified script with `--mode` flag, 18-section health modules |
+
+See [RELEASE.md](RELEASE.md) for detailed release notes.
 
 ---
 

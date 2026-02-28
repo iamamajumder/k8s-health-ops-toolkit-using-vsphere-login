@@ -59,7 +59,9 @@ collect_health_metrics() {
     HEALTH_DS_TOTAL=$(kubectl get ds -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
     HEALTH_DS_TOTAL=${HEALTH_DS_TOTAL:-0}
 
-    HEALTH_DS_NOTREADY=$(kubectl get ds -A --no-headers 2>/dev/null | awk '$4 != $6 {count++} END{print count+0}' | tr -d ' ')
+    # FIX: was $4!=$6 (CURRENT vs UP-TO-DATE) — wrong columns. Correct: $3!=$5 (DESIRED vs READY).
+    # kubectl get ds -A --no-headers columns: NAMESPACE(1) NAME(2) DESIRED(3) CURRENT(4) READY(5) UP-TO-DATE(6) AVAILABLE(7)
+    HEALTH_DS_NOTREADY=$(kubectl get ds -A --no-headers 2>/dev/null | awk '$3 != $5 {count++} END{print count+0}' | tr -d ' ')
     HEALTH_DS_NOTREADY=${HEALTH_DS_NOTREADY:-0}
 
     HEALTH_DS_READY=$((HEALTH_DS_TOTAL - HEALTH_DS_NOTREADY))

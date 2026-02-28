@@ -1,5 +1,76 @@
 # Release Notes
 
+## [4.4] - 2026-02-28
+
+### Health Check Optimization (18 Sections)
+
+- **Section 01**: `kubectl version --short` (removed in K8s 1.28) → `kubectl version -o json | jq`
+- **Section 02**: Replaced expensive `kubectl describe nodes` (2× full describe) with single `kubectl get nodes -o json` + jq for conditions and taints
+- **Section 03**: Fixed header-line bypass bug in pod status filtering; K8s 1.28+ restart count format (`"3 (1h ago)"` → `gsub`); added OOMKilled detection
+- **Section 04**: Fixed DaemonSet awk `$4!=$6` → `$3!=$5` (DESIRED vs READY); fixed ReplicaSet `$3!=$4` → `$3!=$5`; added HPA at-max-replicas detection
+- **Section 05**: Single-fetch PV/PVC with proper empty-state; StorageClass default check
+- **Section 06**: Replaced noisy full `svc -A` dump with counts-by-type + LB highlights; HTTPProxy valid/invalid signal
+- **Section 07**: Removed slow log-tier-count (kubectl logs 1000 lines); replaced with DS DESIRED vs READY
+- **Section 08**: PackageInstall failure filtering; TMC pod health signal; cleaned run_check noise
+- **Section 09**: PDB disruptionsAllowed=0 detection (`[WARN]`); removed noisy kube-system SA dump
+- **Section 10**: Removed `kubectl get cs` (removed in K8s 1.28); added /healthz, CAPI KCP, kube-proxy checks
+- **Section 11**: Fixed `helm list --failed` empty-output bug (`|| echo` never fired; now capture-then-check)
+- **Section 12**: Terminating namespace detection; replaced double raw dump with summary
+- **Section 13**: Fixed `|| echo` fallbacks that never fired on empty ResourceQuota/LimitRange
+- **Section 14**: Single JSON fetch (was 2 API calls); events.k8s.io/v1 field fallbacks; fixed empty-state
+- **Section 15**: Fixed `SSL_VERIFY:OK` hardcoded false positive in curl format string
+- **Section 16**: Fixed undefined `IMAGE_EXCLUSION_PATTERN` bug (was filtering ALL images); replaced YAML grep with jq
+- **Section 17**: Added full certificate expiry checking (CRITICAL <7d, WARN <30d); cross-platform date parsing
+- **Section 18**: Eliminated double health metrics collection (~22 redundant kubectl calls per cluster)
+
+### Kubernetes Version-Agnostic Cleanup
+
+- Removed all hardcoded K8s version strings from script headers and docs
+- Replaced `kubectl version --short` in usage examples (removed in K8s 1.28)
+- Fixed kube-proxy DaemonSet awk column bug in Section 10 (`$5/$3` → `$4/$2`)
+- Added events API field fallbacks for K8s 1.33+ deprecation path (`lastTimestamp → eventTime`, `involvedObject → regarding`, `message → note`)
+- Sort events by `.metadata.creationTimestamp` (works across all K8s versions and both Events APIs)
+- **Compatibility**: Kubernetes 1.28–1.35 (all breaking changes handled)
+
+### Files Changed
+
+- All 18 `lib/sections/*.sh` files rewritten
+- `k8s-health-check.sh` — header cleanup
+- `k8s-cluster-upgrade.sh` — generalized VMware suffix comment
+- `k8s-ops-cmd.sh` — replaced `kubectl version --short` in examples
+- `CLAUDE.md` — removed version pins
+- `README.md`, `README-DEV.md`, `RELEASE.md` — documentation updates
+
+---
+
+## [4.3] - 2026-02-20
+
+### Configuration Refactor
+
+- Renamed `clusters.conf` → `input.conf` (more descriptive filename)
+- Added `[credentials]` section to input.conf: store TMC and vSphere credentials in one file
+- **Credential priority**: environment variable → input.conf → interactive prompt
+- New `load_credentials()` function in `lib/config.sh`, called early in each script's `main()`
+- Added `[supervisors]` section for vSphere Supervisor IP/FQDN mapping
+- Updated all scripts and documentation to reference new file name
+
+### Key Mappings
+
+| input.conf key | Environment variable |
+|----------------|---------------------|
+| `TMC_USERNAME` | `TMC_SELF_MANAGED_USERNAME` |
+| `TMC_PASSWORD` | `TMC_SELF_MANAGED_PASSWORD` |
+| `NONPROD_USERNAME` | `VSPHERE_NONPROD_USERNAME` |
+| `NONPROD_PASSWORD` | `VSPHERE_NONPROD_PASSWORD` |
+
+### Files Changed
+
+- `lib/config.sh` — `load_credentials()` + `load_supervisor_map()` functions
+- `k8s-health-check.sh`, `k8s-cluster-upgrade.sh`, `k8s-ops-cmd.sh` — call `load_credentials()` early
+- `CLAUDE.md`, `README.md`, `README-DEV.md` — documentation updates
+
+---
+
 ## [4.2] - 2026-02-12
 
 ### New Features ✨

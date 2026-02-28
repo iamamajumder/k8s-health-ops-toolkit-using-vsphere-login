@@ -4,32 +4,52 @@
 run_section_15_connectivity() {
     print_header "SECTION 15: EXTERNAL CONNECTIVITY TEST"
 
-    local httpproxy_fqdn=$(kubectl -n k8s-system get httpproxy k8s-ingress-verify-httpproxy -o jsonpath="{.spec.virtualhost.fqdn}" 2>/dev/null)
-    if [ -n "${httpproxy_fqdn}" ]; then
-        echo "--- HTTPProxy Ingress Test (${httpproxy_fqdn}) ---"
-        echo "Testing URL: https://${httpproxy_fqdn}"
+    # FIX: previous code used -w "HTTP_CODE:%{http_code} SSL_VERIFY:OK" where SSL_VERIFY:OK
+    # is hardcoded literal text in the format string — NOT the actual SSL verification result.
+    # This meant Attempt 1 always reported "SSL_VERIFY:OK" even when SSL failed, and the
+    # if-check `grep -q "HTTP_CODE:"` always matched (hardcoded in format string), so
+    # Attempt 2 (insecure fallback) NEVER ran.
+    # Fix: check curl exit code + HTTP code for actual connectivity determination.
+
+    local httpproxy_fqdn
+    httpproxy_fqdn=$(kubectl -n k8s-system get httpproxy k8s-ingress-verify-httpproxy \
+        -o jsonpath="{.spec.virtualhost.fqdn}" 2>/dev/null)
+
+    echo ""
+    echo "--- HTTPProxy Ingress Test ---"
+    echo "Output:"
+    if [ -z "${httpproxy_fqdn}" ]; then
+        echo "  HTTPProxy 'k8s-ingress-verify-httpproxy' not found in k8s-system"
+        echo "  (skipping connectivity test — no test endpoint configured)"
+    else
+        echo "  Testing: https://${httpproxy_fqdn}"
         echo ""
 
-        echo "Attempt 1: With SSL certificate verification"
-        local curl_result=$(curl -s --connect-timeout 10 -o /dev/null -w "HTTP_CODE:%{http_code} SSL_VERIFY:OK" "https://${httpproxy_fqdn}" 2>&1)
-        if echo "${curl_result}" | grep -q "HTTP_CODE:"; then
-            echo "Result: ${curl_result}"
-            echo "Response preview:"
-            curl -s --connect-timeout 10 "https://${httpproxy_fqdn}" 2>/dev/null | head -20 || echo "Could not fetch content"
+        # Attempt 1: with SSL certificate verification
+        local HTTP_CODE SSL_EXIT
+        HTTP_CODE=$(curl -s --connect-timeout 10 -o /dev/null \
+            -w "%{http_code}" "https://${httpproxy_fqdn}" 2>/dev/null)
+        SSL_EXIT=$?
+
+        if [ "$SSL_EXIT" -eq 0 ] && [ "${HTTP_CODE:-0}" -gt 0 ]; then
+            echo "  [OK] Attempt 1 (SSL verify enabled): HTTP ${HTTP_CODE}"
         else
-            echo "Result: SSL certificate verification failed"
+            echo "  Attempt 1 (SSL verify enabled): failed (curl_exit=${SSL_EXIT} http=${HTTP_CODE:-0})"
+            echo "  [WARN] SSL certificate may be self-signed, expired, or hostname mismatch"
             echo ""
-            echo "Attempt 2: Skipping SSL certificate verification (-k flag)"
-            local curl_result_insecure=$(curl -sk --connect-timeout 10 -o /dev/null -w "HTTP_CODE:%{http_code}" "https://${httpproxy_fqdn}" 2>&1)
-            echo "Result: ${curl_result_insecure} (SSL verification skipped)"
-            echo "[WARNING] SSL certificate may be self-signed or invalid"
-            echo "Response preview:"
-            curl -sk --connect-timeout 10 "https://${httpproxy_fqdn}" 2>/dev/null | head -20 || echo "Could not fetch content"
+
+            # Attempt 2: skip SSL verification
+            local HTTP_CODE_INSECURE INSECURE_EXIT
+            HTTP_CODE_INSECURE=$(curl -sk --connect-timeout 10 -o /dev/null \
+                -w "%{http_code}" "https://${httpproxy_fqdn}" 2>/dev/null)
+            INSECURE_EXIT=$?
+
+            if [ "$INSECURE_EXIT" -eq 0 ] && [ "${HTTP_CODE_INSECURE:-0}" -gt 0 ]; then
+                echo "  [OK] Attempt 2 (SSL verify skipped): HTTP ${HTTP_CODE_INSECURE} — endpoint reachable but certificate has issues"
+            else
+                echo "  [WARN] Attempt 2 (SSL verify skipped): unreachable (curl_exit=${INSECURE_EXIT} http=${HTTP_CODE_INSECURE:-0})"
+            fi
         fi
-        echo ""
-    else
-        echo "--- HTTPProxy Ingress Test ---"
-        echo "HTTPProxy k8s-ingress-verify-httpproxy not found in k8s-system namespace"
         echo ""
     fi
 }
