@@ -1,10 +1,10 @@
 #!/bin/bash
 #===============================================================================
-# Kubernetes Cluster Health Check - Unified Script v3.4
+# Kubernetes Cluster Health Check - Unified Script v1.0
 # Compatible:  Kubernetes 1.28–1.35 (VMware VKS/VKR environments)
 # Purpose: Capture cluster state before/after upgrades/changes
-#          Auto-discovers cluster metadata from TMC
-#          Auto-creates TMC contexts based on cluster naming patterns
+#          Auto-discovers cluster metadata from Supervisor
+#          Auto-fetches cluster kubeconfig via vSphere login
 #          Supports parallel execution for multiple clusters
 #===============================================================================
 
@@ -20,11 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source library modules
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
-source "${SCRIPT_DIR}/lib/tmc-context.sh"
-source "${SCRIPT_DIR}/lib/tmc.sh"
+source "${SCRIPT_DIR}/lib/vsphere-cluster.sh"
 source "${SCRIPT_DIR}/lib/health.sh"
 source "${SCRIPT_DIR}/lib/comparison.sh"
-source "${SCRIPT_DIR}/lib/vsphere-login.sh"
 
 
 # Source all health check sections
@@ -56,10 +54,10 @@ check_prerequisites() {
         exit 1
     fi
 
-    # Check if tanzu CLI is available
-    if ! command_exists tanzu; then
-        error "tanzu CLI not found in PATH"
-        error "Please ensure tanzu CLI is installed and available in your PATH"
+    # Check if kubectl vsphere plugin is available
+    if ! kubectl vsphere version >/dev/null 2>&1; then
+        error "kubectl vsphere plugin not found"
+        error "Please ensure the vSphere kubectl plugin is installed and available"
         exit 1
     fi
 
@@ -78,7 +76,7 @@ check_prerequisites() {
 
 show_usage() {
     cat << EOF
-Kubernetes Cluster Health Check (Unified Script v3.4)
+Kubernetes Cluster Health Check (Unified Script v1.0)
 
 Usage:
   PRE-change:   $0 --mode pre [options] [input.conf]
@@ -101,21 +99,23 @@ Example input.conf:
   uat-system-01
 
 Features:
-  - Auto-discovers cluster metadata from TMC
-  - Auto-creates TMC contexts based on naming patterns
-  - Caches cluster metadata for performance
+  - Auto-discovers cluster metadata from Supervisor mappings
+  - Auto-fetches kubeconfig via kubectl vSphere login
+  - Caches namespace and kubeconfig metadata for performance
   - Enhanced health summary with HEALTHY/WARNINGS/CRITICAL status
   - PRE vs POST comparison with deltas (POST mode)
   - Batch parallel execution (6 clusters at a time by default)
 
 Cluster Naming Pattern:
-  *-prod-[1-4]         → Production TMC context
-  *-uat-[1-4]          → Non-production TMC context
-  *-system-[1-4]       → Non-production TMC context
+  *-prod-[1-4]         → Production supervisor mapping
+  *-uat-[1-4]          → Non-Production supervisor mapping
+  *-system-[1-4]       → Non-Production supervisor mapping
 
 Environment Variables:
-  TMC_SELF_MANAGED_USERNAME    TMC username (optional, will prompt if not set)
-  TMC_SELF_MANAGED_PASSWORD    TMC password (optional, will prompt if not set)
+  VSPHERE_PROD_USERNAME        Production vSphere username (optional, prompt if unset)
+  VSPHERE_PROD_PASSWORD        Production vSphere password (optional, prompt if unset)
+  VSPHERE_NONPROD_USERNAME     Non-production vSphere username (optional)
+  VSPHERE_NONPROD_PASSWORD     Non-production vSphere password (optional)
   DEBUG                        Set to 'on' for verbose output
 
 Options:
@@ -150,8 +150,8 @@ Examples:
   # With debug output
   DEBUG=on $0 --mode pre
 
-  # With TMC credentials
-  TMC_SELF_MANAGED_USERNAME=myuser TMC_SELF_MANAGED_PASSWORD=mypass $0 --mode pre
+  # With vSphere credentials
+  VSPHERE_PROD_USERNAME=myuser VSPHERE_PROD_PASSWORD=mypass $0 --mode pre
 
   # Cache management
   $0 --cache-status
@@ -205,19 +205,13 @@ process_cluster() {
     local mode="$3"
     local pre_results_dir="$4"
 
-    # Ensure TMC context exists for this cluster
-    if ! ensure_tmc_context "${cluster_name}"; then
-        error "Failed to create/verify TMC context for ${cluster_name}, skipping"
-        return 1
-    fi
-
     # Create cluster h-c-r directory (new structure)
     local cluster_output_dir="${output_base_dir}/${cluster_name}/h-c-r"
     mkdir -p "${cluster_output_dir}"
 
     # Fetch kubeconfig (consolidated storage - not in results dir)
     local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}"; then
+    if ! fetch_kubeconfig_via_vsphere "${cluster_name}" "${kubeconfig_file}" "${CONFIG_FILE}"; then
         error "Failed to fetch kubeconfig for ${cluster_name}, skipping"
         return 1
     fi
@@ -321,10 +315,10 @@ process_cluster_parallel() {
     local cluster_output_dir="${output_base_dir}/${cluster_name}/h-c-r"
     mkdir -p "${cluster_output_dir}"
 
-    # Fetch kubeconfig (consolidated storage - TMC context already prepared)
+    # Fetch kubeconfig (consolidated storage - vSphere prefetch already prepared)
     local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
     # Suppress stdout only, keep stderr visible for errors
-    if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null; then
+    if ! fetch_kubeconfig_via_vsphere "${cluster_name}" "${kubeconfig_file}" "${CONFIG_FILE}" >/dev/null; then
         {
             echo "===CLUSTER_START==="
             echo "CLUSTER_NAME:${cluster_name}"
@@ -733,12 +727,6 @@ run_health_checks() {
     display_info "Started" "$(get_formatted_timestamp)"
     echo ""
 
-    # Verify TMC CLI is available
-    if ! command_exists tanzu; then
-        error "Tanzu CLI not found. Please install tanzu CLI."
-        exit 1
-    fi
-
     # Create output base directory (new consolidated structure)
     local timestamp=$(get_timestamp)
     local output_base_dir="${OUTPUT_BASE_DIR}"
@@ -762,9 +750,9 @@ run_health_checks() {
     local failed_clusters=()
     declare -a cluster_summaries=()
 
-    # Prepare TMC contexts sequentially first (for both parallel and sequential modes)
+    # Prepare vSphere kubeconfigs sequentially first (for both parallel and sequential modes)
     echo ""
-    prepare_tmc_contexts "${config_file}"
+    prepare_vsphere_kubeconfigs "${config_file}"
     echo ""
 
     if [[ "${parallel}" == "true" ]]; then
@@ -1052,15 +1040,18 @@ parse_arguments() {
 
     # Handle single cluster mode (-c flag)
     if [[ -n "${SINGLE_CLUSTER}" ]]; then
-        # Validate mutual exclusivity with positional config file
+        # Use positional config file as section source when provided, else default ./input.conf
+        local source_config="${config_file}"
         if [[ $# -gt 0 ]] && [[ -f "$1" ]]; then
-            error "Cannot specify both -c CLUSTER and a config file"
-            exit 1
+            source_config="$1"
         fi
 
-        # Create temporary config file with single cluster
-        local temp_config=$(mktemp)
-        echo "${SINGLE_CLUSTER}" > "${temp_config}"
+        # Preserve CREDENTIALS/SUPERVISORS sections so vSphere discovery still works in -c mode.
+        local temp_config
+        if ! temp_config=$(create_single_cluster_config "${SINGLE_CLUSTER}" "${source_config}"); then
+            error "Failed to create single-cluster config from ${source_config}"
+            exit 1
+        fi
         config_file="${temp_config}"
     fi
 
@@ -1144,10 +1135,7 @@ main() {
 
     # Run health checks
     run_health_checks "${CONFIG_FILE}" "${CHECK_MODE}" "${PRE_RESULTS_DIR}" "${PARALLEL_MODE}" "${BATCH_SIZE}"
-
-    # Run vSphere login at the end (synchronous)
-    local cluster_list=$(get_cluster_list "${CONFIG_FILE}")
-    run_vsphere_login "${cluster_list}" "${CONFIG_FILE}"
 }
 
 main "$@"
+

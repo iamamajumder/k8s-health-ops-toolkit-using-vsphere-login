@@ -33,31 +33,6 @@ run_section_08_tanzu_vmware() {
         fi
     fi
 
-    # --- TMC Agent ---
-    # FIX: raw pod dump replaced with Running/NotRunning health signal.
-    echo ""
-    echo "--- TMC Agent (vmware-system-tmc) ---"
-    echo "Output:"
-    local TMC_PODS
-    TMC_PODS=$(kubectl get pods -n vmware-system-tmc --no-headers 2>/dev/null)
-    if [ -z "$TMC_PODS" ]; then
-        echo "  TMC namespace not found or no pods"
-    else
-        local TMC_TOTAL TMC_NOT_RUNNING
-        TMC_TOTAL=$(echo "$TMC_PODS" | wc -l | tr -d ' ')
-        TMC_NOT_RUNNING=$(echo "$TMC_PODS" | grep -v " Running " || true)
-        if [ -z "$TMC_NOT_RUNNING" ]; then
-            echo "  All ${TMC_TOTAL} TMC pod(s) Running"
-        else
-            echo "  [WARN] TMC pods not Running:"
-            echo "$TMC_NOT_RUNNING"
-        fi
-        local IMPERSONATION_COUNT
-        IMPERSONATION_COUNT=$(kubectl get secrets -n vmware-system-tmc --no-headers 2>/dev/null | \
-            grep -c impersonation || true)
-        echo "  TMC impersonation secrets: ${IMPERSONATION_COUNT:-0}"
-    fi
-
     # --- Cluster API Resources ---
     echo ""
     echo "--- Cluster API Resources ---"

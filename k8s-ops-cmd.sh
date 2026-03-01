@@ -1,10 +1,10 @@
 #!/bin/bash
 #===============================================================================
-# Kubernetes Multi-Cluster Ops Command Script v3.8
+# Kubernetes Multi-Cluster Ops Command Script v1.0
 # Purpose: Execute the same command across all clusters in input.conf
-#          or dynamically discover clusters from TMC management cluster
-#          with proper TMC context/kubeconfig setup and parallel execution
-# v3.8: Fixed credential prompts for -c flag, migrated to new output directory structure
+#          or dynamically discover clusters from Supervisor environment
+#          with vSphere kubeconfig setup and parallel execution
+# v1.0: vSphere-only runtime and Supervisor discovery
 #===============================================================================
 
 set +e          # Disable exit-on-error
@@ -19,9 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source library modules
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
-source "${SCRIPT_DIR}/lib/tmc-context.sh"
-source "${SCRIPT_DIR}/lib/tmc.sh"
-source "${SCRIPT_DIR}/lib/vsphere-login.sh"
+source "${SCRIPT_DIR}/lib/vsphere-cluster.sh"
 
 #===============================================================================
 # Script Configuration
@@ -32,6 +30,7 @@ DEFAULT_CONFIG="./input.conf"
 BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
 SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
+OPS_CONFIG_FILE=""          # Runtime config file used by worker functions
 
 #===============================================================================
 # Usage Function
@@ -39,7 +38,7 @@ SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
 
 show_usage() {
     cat << EOF
-Kubernetes Multi-Cluster Ops Command Script v3.8
+Kubernetes Multi-Cluster Ops Command Script v1.0
 
 Usage:
   $0 [OPTIONS] "<command>" [input.conf]
@@ -48,7 +47,7 @@ Usage:
 
 Description:
   Execute the same command across all clusters defined in input.conf.
-  Or dynamically discover clusters from a TMC management cluster.
+  Or dynamically discover clusters from a Supervisor environment.
   Commands run in parallel batches of 6 by default for faster execution.
 
 Arguments:
@@ -61,7 +60,7 @@ Options:
   -h, --help                       Show this help message
   -c, --cluster <name>             Run command on a single cluster (no input.conf needed)
                                    Mutually exclusive with -m and input.conf
-  -m, --management-cluster <env>   Discover clusters from management cluster
+  -m, --management-cluster <env>   Discover clusters from Supervisor environment
                                    Environment: prod-1, prod-2, uat-2, system-3
                                    Mutually exclusive with -c and input.conf
   --timeout <sec>                  Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
@@ -99,7 +98,7 @@ Examples (File-based mode):
   $0 --sequential "kubectl get nodes"
 
 Examples (Management Discovery mode):
-  # Execute command on all clusters in prod-1 management cluster
+  # Execute command on all clusters in prod-1 supervisor environment
   $0 -m prod-1 "kubectl get nodes"
 
   # Dry run with management discovery
@@ -112,8 +111,10 @@ Examples (Management Discovery mode):
   $0 -m system-3 --sequential "kubectl version -o json | jq -r '.serverVersion.gitVersion'"
 
 Environment Variables:
-  TMC_SELF_MANAGED_USERNAME    TMC username (optional, will prompt if not set)
-  TMC_SELF_MANAGED_PASSWORD    TMC password (optional, will prompt if not set)
+  VSPHERE_PROD_USERNAME        Production vSphere username (optional, prompt if unset)
+  VSPHERE_PROD_PASSWORD        Production vSphere password (optional, prompt if unset)
+  VSPHERE_NONPROD_USERNAME     Non-production vSphere username (optional)
+  VSPHERE_NONPROD_PASSWORD     Non-production vSphere password (optional)
   DEBUG                        Set to 'on' for verbose output
 
 EOF
@@ -130,8 +131,8 @@ check_prerequisites() {
         exit 1
     fi
 
-    if ! command_exists tanzu; then
-        error "tanzu CLI not found in PATH"
+    if ! kubectl vsphere version >/dev/null 2>&1; then
+        error "kubectl vsphere plugin not found"
         exit 1
     fi
 }
@@ -155,31 +156,24 @@ execute_on_cluster() {
     local output_base_dir="${OUTPUT_BASE_DIR}"
     local kubeconfig_file="${output_base_dir}/${cluster_name}/kubeconfig"
 
-    # Setup TMC context and fetch kubeconfig
-    # Note: Keep stderr visible for prompts and errors
-    if ! ensure_tmc_context "${cluster_name}" >/dev/null; then
+    # Fetch kubeconfig using vSphere flow
+    if ! fetch_kubeconfig_via_vsphere "${cluster_name}" "${kubeconfig_file}" "${OPS_CONFIG_FILE}" >/dev/null; then
         status="FAILED"
-        output="Failed to create/verify TMC context"
+        output="Failed to fetch kubeconfig via vSphere"
         exit_code=1
     else
-        if ! fetch_kubeconfig_auto "${cluster_name}" "${kubeconfig_file}" >/dev/null; then
-            status="FAILED"
-            output="Failed to fetch kubeconfig"
-            exit_code=1
+        # Execute the command with timeout
+        export KUBECONFIG="${kubeconfig_file}"
+
+        if command_exists timeout; then
+            output=$(timeout "${timeout_sec}" bash -c "${command}" 2>&1) || exit_code=$?
         else
-            # Execute the command with timeout
-            export KUBECONFIG="${kubeconfig_file}"
+            # Fallback for systems without timeout command (e.g., some macOS)
+            output=$(bash -c "${command}" 2>&1) || exit_code=$?
+        fi
 
-            if command_exists timeout; then
-                output=$(timeout "${timeout_sec}" bash -c "${command}" 2>&1) || exit_code=$?
-            else
-                # Fallback for systems without timeout command (e.g., some macOS)
-                output=$(bash -c "${command}" 2>&1) || exit_code=$?
-            fi
-
-            if [ ${exit_code} -ne 0 ]; then
-                status="FAILED"
-            fi
+        if [ ${exit_code} -ne 0 ]; then
+            status="FAILED"
         fi
     fi
 
@@ -575,30 +569,30 @@ run_ops_command() {
     # Load credentials from config file (env vars take priority)
     load_credentials "${config_file}"
 
-    # Management cluster discovery mode
+    # Management environment discovery mode (supervisor-based)
     if [[ -n "${mgmt_env}" ]]; then
         # Validate environment format
         if ! validate_management_environment "${mgmt_env}"; then
             exit 1
         fi
 
-        # Ensure TMC context for environment
-        if ! ensure_tmc_context_for_environment "${mgmt_env}"; then
-            error "Failed to create TMC context for environment: ${mgmt_env}"
+        if [[ ! -f "${config_file}" ]]; then
+            error "Configuration file not found: ${config_file}"
             exit 1
         fi
 
+        export MANAGEMENT_DISCOVERY_CONFIG_FILE="${config_file}"
         # Discover clusters
-        progress "Discovering clusters from management cluster..."
+        progress "Discovering clusters from supervisor environment..."
         cluster_list=$(get_cluster_list_from_management "${mgmt_env}")
 
         if [[ -z "${cluster_list}" ]]; then
-            warning "No clusters found in management cluster for environment: ${mgmt_env}"
+            warning "No clusters found for environment: ${mgmt_env}"
             exit 0
         fi
 
         cluster_count=$(count_clusters_from_list "${cluster_list}")
-        source_description="Management Cluster (${mgmt_env})"
+        source_description="Supervisor Environment (${mgmt_env})"
 
     else
         # File-based mode (existing logic)
@@ -624,17 +618,13 @@ run_ops_command() {
         source_description="Config File (${config_file})"
     fi
 
-    # Prepare TMC contexts sequentially BEFORE parallel execution to handle credential prompts
-    # This ensures credentials are prompted once upfront, not during parallel operations
-    if [[ -z "${mgmt_env}" ]]; then
-        # For file-based mode: prepare contexts for all clusters in config
-        progress "Preparing TMC contexts for clusters..."
-        if ! prepare_tmc_contexts "${config_file}"; then
-            error "Failed to prepare TMC contexts"
-            exit 1
-        fi
+    # Prefetch kubeconfigs sequentially to avoid parallel login races and prompts
+    progress "Preparing vSphere kubeconfigs for clusters..."
+    if [[ -n "${mgmt_env}" ]]; then
+        prepare_vsphere_kubeconfigs_from_list "${cluster_list}" "${config_file}" || true
+    else
+        prepare_vsphere_kubeconfigs "${config_file}" || true
     fi
-    # Note: For management discovery mode (-m), context is already prepared at line 582
 
     # Create timestamp for output files
     local timestamp=$(get_timestamp)
@@ -711,8 +701,6 @@ run_ops_command() {
     display_banner "Ops Command Complete!"
     echo ""
 
-    # Run vSphere login at the end (synchronous)
-    run_vsphere_login "${cluster_list}" "${config_file}"
 }
 
 #===============================================================================
@@ -825,14 +813,16 @@ parse_arguments() {
 
     # Handle single cluster mode (-c flag)
     if [[ -n "${SINGLE_CLUSTER}" ]]; then
-        if [[ "${config_file}" != "${DEFAULT_CONFIG}" ]]; then
-            error "Cannot specify both -c CLUSTER and a config file"
+        local source_config="${config_file}"
+        local temp_config
+        if ! temp_config=$(create_single_cluster_config "${SINGLE_CLUSTER}" "${source_config}"); then
+            error "Single-cluster mode requires supervisor mappings in ${source_config}"
             exit 1
         fi
-        local temp_config=$(mktemp)
-        echo "${SINGLE_CLUSTER}" > "${temp_config}"
         config_file="${temp_config}"
     fi
+
+    OPS_CONFIG_FILE="${config_file}"
 
     # Run the ops command
     run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}" "${batch_size}" "${MANAGEMENT_ENV}"
@@ -848,3 +838,4 @@ main() {
 }
 
 main "$@"
+

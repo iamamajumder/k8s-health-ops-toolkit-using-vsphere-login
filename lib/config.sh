@@ -2,7 +2,7 @@
 #===============================================================================
 # Configuration Parser Library
 # Functions for parsing and managing configuration files
-# v3.1: Simplified to support simple cluster names (one per line)
+# v1.0: vSphere-only configuration and supervisor discovery
 #===============================================================================
 
 # Source common functions if not already loaded
@@ -166,10 +166,11 @@ display_cluster_list() {
 # Load credentials from config file's ===CREDENTIALS=== section
 # Sets env vars only if not already set (env var takes priority)
 # Key mapping:
-#   TMC_USERNAME       → TMC_SELF_MANAGED_USERNAME
-#   TMC_PASSWORD       → TMC_SELF_MANAGED_PASSWORD
-#   NONPROD_USERNAME   → VSPHERE_NONPROD_USERNAME
-#   NONPROD_PASSWORD   → VSPHERE_NONPROD_PASSWORD
+#   VSPHERE_PROD_USERNAME      -> VSPHERE_PROD_USERNAME
+#   VSPHERE_PROD_PASSWORD      -> VSPHERE_PROD_PASSWORD
+#   VSPHERE_NONPROD_USERNAME   -> VSPHERE_NONPROD_USERNAME
+#   VSPHERE_NONPROD_PASSWORD   -> VSPHERE_NONPROD_PASSWORD
+# Legacy aliases accepted: NONPROD_USERNAME, NONPROD_PASSWORD
 load_credentials() {
     local config_file="$1"
 
@@ -200,25 +201,26 @@ load_credentials() {
             value=$(echo "${value}" | xargs)
             [[ -z "${key}" || -z "${value}" ]] && continue
 
-            # Map config keys to env var names, set only if not already set
+            # Map config keys to env var names, set only if not already set.
+            # Supports NONPROD_* legacy aliases for backward compatibility.
             case "${key}" in
-                TMC_USERNAME)
-                    if [[ -z "${TMC_SELF_MANAGED_USERNAME:-}" ]]; then
-                        export TMC_SELF_MANAGED_USERNAME="${value}"
+                VSPHERE_PROD_USERNAME)
+                    if [[ -z "${VSPHERE_PROD_USERNAME:-}" ]]; then
+                        export VSPHERE_PROD_USERNAME="${value}"
                         loaded=$((loaded + 1))
                     else
-                        debug "TMC_SELF_MANAGED_USERNAME already set via env var, skipping input.conf value"
+                        debug "VSPHERE_PROD_USERNAME already set via env var, skipping input.conf value"
                     fi
                     ;;
-                TMC_PASSWORD)
-                    if [[ -z "${TMC_SELF_MANAGED_PASSWORD:-}" ]]; then
-                        export TMC_SELF_MANAGED_PASSWORD="${value}"
+                VSPHERE_PROD_PASSWORD)
+                    if [[ -z "${VSPHERE_PROD_PASSWORD:-}" ]]; then
+                        export VSPHERE_PROD_PASSWORD="${value}"
                         loaded=$((loaded + 1))
                     else
-                        debug "TMC_SELF_MANAGED_PASSWORD already set via env var, skipping input.conf value"
+                        debug "VSPHERE_PROD_PASSWORD already set via env var, skipping input.conf value"
                     fi
                     ;;
-                NONPROD_USERNAME)
+                VSPHERE_NONPROD_USERNAME|NONPROD_USERNAME)
                     if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" ]]; then
                         export VSPHERE_NONPROD_USERNAME="${value}"
                         loaded=$((loaded + 1))
@@ -226,7 +228,7 @@ load_credentials() {
                         debug "VSPHERE_NONPROD_USERNAME already set via env var, skipping input.conf value"
                     fi
                     ;;
-                NONPROD_PASSWORD)
+                VSPHERE_NONPROD_PASSWORD|NONPROD_PASSWORD)
                     if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
                         export VSPHERE_NONPROD_PASSWORD="${value}"
                         loaded=$((loaded + 1))
@@ -303,25 +305,82 @@ load_supervisor_map() {
     return 0
 }
 
-#===============================================================================
-# Management Cluster Discovery Functions (v3.5)
-#===============================================================================
+# Build a temporary single-cluster config while preserving credentials/supervisor sections.
+# Args:
+#   $1 cluster name (required)
+#   $2 source config file to copy sections from (required for vSphere supervisor flows)
+#   $3 output file path (optional; mktemp if omitted)
+# Prints: output config path on stdout
+create_single_cluster_config() {
+    local cluster_name="$1"
+    local source_config="$2"
+    local output_file="${3:-}"
 
-# Get cluster list from management cluster discovery
-get_cluster_list_from_management() {
-    local env_flag="$1"
-
-    # Get management cluster name
-    local mgmt_cluster
-    if ! mgmt_cluster=$(get_management_cluster_for_environment "${env_flag}"); then
+    if [[ -z "${cluster_name}" ]]; then
+        error "Cluster name is required to build single-cluster config"
         return 1
     fi
 
-    debug "Matched management cluster: ${mgmt_cluster}"
+    if [[ -z "${source_config}" || ! -f "${source_config}" ]]; then
+        error "Source config with supervisor mappings not found: ${source_config:-<empty>}"
+        return 1
+    fi
 
-    # Discover clusters
+    if [[ -z "${output_file}" ]]; then
+        output_file=$(mktemp)
+    fi
+    : > "${output_file}" || return 1
+
+    local line
+    local in_credentials=false
+    local in_supervisors=false
+
+    while IFS= read -r line; do
+        if [[ "${line}" == *"===CREDENTIALS==="* ]]; then
+            in_credentials=true
+        fi
+        if [[ "${in_credentials}" == "true" ]]; then
+            echo "${line}" >> "${output_file}"
+        fi
+        if [[ "${line}" == *"===END_CREDENTIALS==="* ]]; then
+            in_credentials=false
+            echo "" >> "${output_file}"
+        fi
+
+        if [[ "${line}" == *"===SUPERVISORS==="* ]]; then
+            in_supervisors=true
+        fi
+        if [[ "${in_supervisors}" == "true" ]]; then
+            echo "${line}" >> "${output_file}"
+        fi
+        if [[ "${line}" == *"===END_SUPERVISORS==="* ]]; then
+            in_supervisors=false
+            echo "" >> "${output_file}"
+        fi
+    done < "${source_config}"
+
+    echo "${cluster_name}" >> "${output_file}"
+    echo "${output_file}"
+    return 0
+}
+
+#===============================================================================
+# Supervisor-based Discovery Functions
+#===============================================================================
+
+# Get cluster list from supervisor environment discovery
+get_cluster_list_from_management() {
+    local env_flag="$1"
+    local config_file="${MANAGEMENT_DISCOVERY_CONFIG_FILE:-./input.conf}"
+
+    # discover_clusters_by_supervisor_env is provided by lib/vsphere-cluster.sh
+    if ! command -v discover_clusters_by_supervisor_env >/dev/null 2>&1; then
+        error "Supervisor discovery helper not loaded"
+        return 1
+    fi
+
     local cluster_data
-    if ! cluster_data=$(discover_clusters_by_management "${mgmt_cluster}"); then
+    if ! cluster_data=$(discover_clusters_by_supervisor_env "${env_flag}" "${config_file}"); then
         return 1
     fi
 
@@ -329,8 +388,8 @@ get_cluster_list_from_management() {
         return 0
     fi
 
-    # Extract just cluster names (first field before |)
-    echo "${cluster_data}" | cut -d'|' -f1
+    # Already returns one cluster per line
+    echo "${cluster_data}"
     return 0
 }
 
@@ -373,6 +432,8 @@ export -f display_configuration
 export -f count_clusters
 export -f display_cluster_list
 export -f load_supervisor_map
+export -f create_single_cluster_config
 export -f get_cluster_list_from_management
 export -f validate_management_environment
 export -f count_clusters_from_list
+
