@@ -441,7 +441,7 @@ compare_workloads() {
     echo ""
 
     echo "DaemonSets:"
-    local ds_notready=$(kubectl get ds -A 2>/dev/null | awk 'NR>1 && $4 != $6 {print}')
+    local ds_notready=$(kubectl get ds -A --no-headers 2>/dev/null | awk '$3 != $5 {print}')
     if [ -n "${ds_notready}" ]; then
         echo "[WARNING] DaemonSets NOT fully ready:"
         echo "${ds_notready}"

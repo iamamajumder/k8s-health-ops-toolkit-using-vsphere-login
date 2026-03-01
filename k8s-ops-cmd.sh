@@ -31,6 +31,16 @@ BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
 SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
 OPS_CONFIG_FILE=""          # Runtime config file used by worker functions
+OPS_SINGLE_CLUSTER_TEMP_CONFIG=""  # Temporary config generated for -c mode
+
+# Remove generated single-cluster config on script exit.
+cleanup_ops_single_cluster_temp_config() {
+    if [[ -n "${OPS_SINGLE_CLUSTER_TEMP_CONFIG}" && -f "${OPS_SINGLE_CLUSTER_TEMP_CONFIG}" ]]; then
+        rm -f "${OPS_SINGLE_CLUSTER_TEMP_CONFIG}" 2>/dev/null || true
+    fi
+}
+
+trap cleanup_ops_single_cluster_temp_config EXIT
 
 #===============================================================================
 # Usage Function
@@ -819,6 +829,7 @@ parse_arguments() {
             error "Single-cluster mode requires supervisor mappings in ${source_config}"
             exit 1
         fi
+        OPS_SINGLE_CLUSTER_TEMP_CONFIG="${temp_config}"
         config_file="${temp_config}"
     fi
 

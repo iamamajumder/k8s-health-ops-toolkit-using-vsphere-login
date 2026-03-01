@@ -40,6 +40,16 @@ PRE_RESULTS_DIR=""
 PARALLEL_MODE="true"       # Parallel execution enabled by default
 BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 SINGLE_CLUSTER=""          # Single cluster mode (via -c flag)
+SINGLE_CLUSTER_TEMP_CONFIG=""  # Temporary config generated for -c mode
+
+# Remove generated single-cluster config on script exit.
+cleanup_single_cluster_temp_config() {
+    if [[ -n "${SINGLE_CLUSTER_TEMP_CONFIG}" && -f "${SINGLE_CLUSTER_TEMP_CONFIG}" ]]; then
+        rm -f "${SINGLE_CLUSTER_TEMP_CONFIG}" 2>/dev/null || true
+    fi
+}
+
+trap cleanup_single_cluster_temp_config EXIT
 
 #===============================================================================
 # Prerequisite Checks
@@ -1052,6 +1062,7 @@ parse_arguments() {
             error "Failed to create single-cluster config from ${source_config}"
             exit 1
         fi
+        SINGLE_CLUSTER_TEMP_CONFIG="${temp_config}"
         config_file="${temp_config}"
     fi
 
