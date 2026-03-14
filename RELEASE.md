@@ -1,5 +1,23 @@
 # Release Notes
 
+## [1.1] - 2026-03-14
+
+### Summary
+
+- Renamed credential variables for clearer AO vs non-AO account handling:
+  - `AO_ACCOUNT_USERNAME`
+  - `AO_ACCOUNT_PASSWORD`
+  - `NONAO_ACCOUNT_USERNAME`
+  - `NONAO_ACCOUNT_PASSWORD`
+- Updated credential flow semantics:
+  - Supervisor login for prod and non-prod uses `AO_ACCOUNT_*`
+  - Production workload login uses `AO_ACCOUNT_*`
+  - Non-production workload login uses `NONAO_ACCOUNT_*`
+- Added supervisor-only mode to `k8s-ops-cmd.sh`:
+  - `-s, --supervisor <env>`
+  - Example: `./k8s-ops-cmd.sh -s uat-2 "kubectl get cluster -A"`
+- Added `supervisor-ops/` output path for supervisor-only command results.
+
 ## [1.0] - 2026-03-01
 
 ### Summary
