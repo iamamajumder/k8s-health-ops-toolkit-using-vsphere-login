@@ -41,10 +41,12 @@ Runs one command across many clusters.
 Discovery modes:
 - Config file list (`input.conf`)
 - Environment discovery (`-m prod-1|prod-2|uat-2|system-3`) from Supervisor mappings
+- Supervisor-only execution (`-s prod-1|prod-2|uat-2|system-3`)
 
 Key flags:
 - `-c, --cluster <name>`
 - `-m, --management-cluster <env>`
+- `-s, --supervisor <env>`
 - `--timeout <sec>`
 - `--sequential`
 - `--batch-size N`
@@ -98,6 +100,7 @@ Subpaths:
 - `kubeconfig`
 - `h-c-r/`
 - `ops/`
+- `supervisor-ops/`
 - `upgrade/`
 
 Aggregated ops output:
@@ -116,6 +119,9 @@ chmod +x k8s-health-check.sh k8s-cluster-upgrade.sh k8s-ops-cmd.sh
 
 # Multi-cluster ops
 ./k8s-ops-cmd.sh "kubectl get nodes --no-headers | wc -l"
+
+# Supervisor-only command
+./k8s-ops-cmd.sh -s uat-2 "kubectl get cluster -A"
 ```
 
 

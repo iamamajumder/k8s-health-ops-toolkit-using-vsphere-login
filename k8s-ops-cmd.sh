@@ -29,6 +29,7 @@ DEFAULT_TIMEOUT=30          # Default command timeout in seconds
 DEFAULT_CONFIG="./input.conf"
 BATCH_SIZE=${DEFAULT_BATCH_SIZE}  # Use shared constant
 MANAGEMENT_ENV=""           # Environment parameter for -m flag
+SUPERVISOR_ENV=""           # Supervisor-only execution target (via -s flag)
 SINGLE_CLUSTER=""           # Single cluster mode (via -c flag)
 OPS_CONFIG_FILE=""          # Runtime config file used by worker functions
 OPS_SINGLE_CLUSTER_TEMP_CONFIG=""  # Temporary config generated for -c mode
@@ -54,10 +55,12 @@ Usage:
   $0 [OPTIONS] "<command>" [input.conf]
   $0 -c <cluster> [OPTIONS] "<command>"
   $0 -m <environment> [OPTIONS] "<command>"
+  $0 -s <environment> [OPTIONS] "<command>" [input.conf]
 
 Description:
   Execute the same command across all clusters defined in input.conf.
   Or dynamically discover clusters from a Supervisor environment.
+  Or log in to one Supervisor environment directly and run the command there.
   Commands run in parallel batches of 6 by default for faster execution.
 
 Arguments:
@@ -73,6 +76,9 @@ Options:
   -m, --management-cluster <env>   Discover clusters from Supervisor environment
                                    Environment: prod-1, prod-2, uat-2, system-3
                                    Mutually exclusive with -c and input.conf
+  -s, --supervisor <env>           Log in to one Supervisor and run the command there
+                                   Environment: prod-1, prod-2, uat-2, system-3
+                                   Mutually exclusive with -c and -m
   --timeout <sec>                  Command timeout in seconds (default: ${DEFAULT_TIMEOUT})
   --sequential                     Run commands sequentially instead of parallel
   --batch-size N                   Number of clusters to process in parallel (default: 6)
@@ -119,6 +125,13 @@ Examples (Management Discovery mode):
 
   # Management discovery with sequential execution
   $0 -m system-3 --sequential "kubectl version -o json | jq -r '.serverVersion.gitVersion'"
+
+Examples (Supervisor-only mode):
+  # Run command directly on one Supervisor
+  $0 -s uat-2 "kubectl get cluster -A"
+
+  # Supervisor mode with custom timeout
+  $0 -s prod-1 --timeout 60 "kubectl get namespaces"
 
 Environment Variables:
   AO_ACCOUNT_USERNAME          Used for all supervisor logins and prod workload logins
@@ -714,6 +727,123 @@ run_ops_command() {
 }
 
 #===============================================================================
+# Execute Command on Supervisor
+#===============================================================================
+
+execute_on_supervisor() {
+    local supervisor_env="$1"
+    local command="$2"
+    local timeout_sec="$3"
+    local config_file="$4"
+    local output_only="$5"
+
+    if ! validate_management_environment "${supervisor_env}"; then
+        return 1
+    fi
+
+    if [[ ! -f "${config_file}" ]]; then
+        error "Configuration file not found: ${config_file}"
+        return 1
+    fi
+
+    load_credentials "${config_file}"
+    load_supervisor_map "${config_file}"
+
+    local supervisor="${SUPERVISOR_IP_MAP[$supervisor_env]:-}"
+    if [[ -z "${supervisor}" ]]; then
+        error "Supervisor mapping not found for environment '${supervisor_env}'"
+        return 1
+    fi
+
+    local original_kubeconfig="${KUBECONFIG:-}"
+    local temp_kubeconfig
+    temp_kubeconfig=$(mktemp)
+    chmod 600 "${temp_kubeconfig}" 2>/dev/null || true
+    export KUBECONFIG="${temp_kubeconfig}"
+
+    local status="SUCCESS"
+    local output=""
+    local exit_code=0
+
+    progress "Logging in to supervisor ${supervisor_env} (${supervisor})..."
+    if ! ensure_supervisor_session_for_suffix "${supervisor_env}" "${config_file}"; then
+        status="FAILED"
+        output="Failed to log in to supervisor ${supervisor_env} (${supervisor})"
+        exit_code=1
+    else
+        kubectl config use-context "${supervisor}" >/dev/null 2>&1 || true
+
+        if command_exists timeout; then
+            output=$(timeout "${timeout_sec}" bash -c "${command}" 2>&1) || exit_code=$?
+        else
+            output=$(bash -c "${command}" 2>&1) || exit_code=$?
+        fi
+
+        if [[ ${exit_code} -ne 0 ]]; then
+            status="FAILED"
+        fi
+    fi
+
+    if [[ -n "${original_kubeconfig}" ]]; then
+        export KUBECONFIG="${original_kubeconfig}"
+    else
+        unset KUBECONFIG
+    fi
+    rm -f "${temp_kubeconfig}" 2>/dev/null || true
+
+    local timestamp
+    timestamp=$(get_timestamp)
+    local output_base_dir="${OUTPUT_BASE_DIR}"
+    local supervisor_output_dir="${output_base_dir}/supervisor-ops"
+    mkdir -p "${supervisor_output_dir}"
+    local output_file="${supervisor_output_dir}/ops-${supervisor_env}-${timestamp}.txt"
+
+    {
+        echo "================================================================================"
+        echo "SUPERVISOR OPS COMMAND RESULT"
+        echo "================================================================================"
+        echo "Timestamp: $(get_formatted_timestamp)"
+        echo "Supervisor Environment: ${supervisor_env}"
+        echo "Supervisor Endpoint: ${supervisor}"
+        echo "Command: ${command}"
+        echo "Status: ${status}"
+        echo "Exit Code: ${exit_code}"
+        echo "================================================================================"
+        echo ""
+        echo "${output}"
+    } > "${output_file}"
+
+    if [[ "${output_only}" == "true" ]]; then
+        echo "${output}"
+    else
+        echo ""
+        print_section "Supervisor Ops Command"
+        display_info "Command" "${command}"
+        display_info "Supervisor" "${supervisor_env} (${supervisor})"
+        display_info "Timeout" "${timeout_sec}s"
+        display_info "Status" "${status}"
+        echo ""
+        echo "${output}"
+        echo ""
+        print_section "Results Saved"
+        echo -e "${CYAN}Supervisor output:${NC} ${output_file}"
+        echo ""
+        display_banner "Supervisor Ops Command Complete!"
+    fi
+
+    local supervisor_files=($(ls -t "${supervisor_output_dir}"/ops-"${supervisor_env}"-*.txt 2>/dev/null))
+    local supervisor_file_count=${#supervisor_files[@]}
+    if [[ ${supervisor_file_count} -gt 5 ]]; then
+        for ((i=5; i<supervisor_file_count; i++)); do
+            debug "Removing old supervisor output: $(basename "${supervisor_files[$i]}")"
+            rm -f "${supervisor_files[$i]}"
+        done
+    fi
+
+    return ${exit_code}
+}
+
+#===============================================================================
 # Argument Parsing
 #===============================================================================
 
@@ -757,6 +887,17 @@ parse_arguments() {
                     MANAGEMENT_ENV="$1"
                 else
                     error "Environment required for -m/--management-cluster option"
+                    error "Format: prod-1, prod-2, uat-2, system-3"
+                    exit 1
+                fi
+                shift
+                ;;
+            -s|--supervisor)
+                shift
+                if [[ -n "$1" ]] && [[ ! "$1" =~ ^- ]]; then
+                    SUPERVISOR_ENV="$1"
+                else
+                    error "Environment required for -s/--supervisor option"
                     error "Format: prod-1, prod-2, uat-2, system-3"
                     exit 1
                 fi
@@ -815,9 +956,13 @@ parse_arguments() {
         show_usage
     fi
 
-    # Validate mutual exclusivity of -c, -m, and config file
-    if [[ -n "${SINGLE_CLUSTER}" && -n "${MANAGEMENT_ENV}" ]]; then
-        error "Cannot specify both -c and -m options"
+    # Validate mutual exclusivity of -c, -m, and -s
+    local selected_modes=0
+    [[ -n "${SINGLE_CLUSTER}" ]] && selected_modes=$((selected_modes + 1))
+    [[ -n "${MANAGEMENT_ENV}" ]] && selected_modes=$((selected_modes + 1))
+    [[ -n "${SUPERVISOR_ENV}" ]] && selected_modes=$((selected_modes + 1))
+    if [[ ${selected_modes} -gt 1 ]]; then
+        error "Cannot combine -c, -m, and -s options"
         exit 1
     fi
 
@@ -834,6 +979,11 @@ parse_arguments() {
     fi
 
     OPS_CONFIG_FILE="${config_file}"
+
+    if [[ -n "${SUPERVISOR_ENV}" ]]; then
+        execute_on_supervisor "${SUPERVISOR_ENV}" "${command}" "${timeout_sec}" "${config_file}" "${output_only}"
+        return $?
+    fi
 
     # Run the ops command
     run_ops_command "${command}" "${config_file}" "${timeout_sec}" "${parallel}" "${output_only}" "${batch_size}" "${MANAGEMENT_ENV}"
