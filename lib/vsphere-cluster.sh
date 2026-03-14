@@ -23,8 +23,8 @@ NAMESPACE_CACHE_EXPIRY=43200   # 12 hours
 declare -A _VSPHERE_SUPERVISOR_READY 2>/dev/null || _VSPHERE_SUPERVISOR_READY=""
 declare -A _VSPHERE_NAMESPACE_BY_CLUSTER 2>/dev/null || _VSPHERE_NAMESPACE_BY_CLUSTER=""
 
-VSPHERE_PROD_CREDENTIALS_READY="${VSPHERE_PROD_CREDENTIALS_READY:-}"
-VSPHERE_NONPROD_CREDENTIALS_READY="${VSPHERE_NONPROD_CREDENTIALS_READY:-}"
+AO_ACCOUNT_CREDENTIALS_READY="${AO_ACCOUNT_CREDENTIALS_READY:-}"
+NONAO_ACCOUNT_CREDENTIALS_READY="${NONAO_ACCOUNT_CREDENTIALS_READY:-}"
 VSPHERE_PLUGIN_CHECKED="${VSPHERE_PLUGIN_CHECKED:-}"
 
 #===============================================================================
@@ -126,24 +126,11 @@ ensure_vsphere_plugin() {
 ensure_vsphere_credentials() {
     local cluster_list="${1:-}"
 
-    # Backward-compatible alias support
-    if [[ -z "${VSPHERE_PROD_USERNAME:-}" && -n "${VSPHERE_AO_USERNAME:-}" ]]; then
-        export VSPHERE_PROD_USERNAME="${VSPHERE_AO_USERNAME}"
-    fi
-    if [[ -z "${VSPHERE_PROD_PASSWORD:-}" && -n "${VSPHERE_AO_PASSWORD:-}" ]]; then
-        export VSPHERE_PROD_PASSWORD="${VSPHERE_AO_PASSWORD}"
-    fi
-    if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" && -n "${NONPROD_USERNAME:-}" ]]; then
-        export VSPHERE_NONPROD_USERNAME="${NONPROD_USERNAME}"
-    fi
-    if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" && -n "${NONPROD_PASSWORD:-}" ]]; then
-        export VSPHERE_NONPROD_PASSWORD="${NONPROD_PASSWORD}"
-    fi
-
     local requires_prod=false
-    local requires_nonprod=false
+    local requires_nonprod_workload=false
 
-    # Infer which credential set(s) are needed for this call.
+    # All supervisor logins use the production credential set.
+    # Non-production workload logins additionally need the non-prod workload set.
     while IFS= read -r cluster; do
         [[ -z "${cluster}" ]] && continue
 
@@ -155,70 +142,71 @@ ensure_vsphere_credentials() {
             continue
         fi
         if [[ "${cluster}" =~ ^(uat|system|dev)-[1-4]$ ]]; then
-            requires_nonprod=true
+            requires_prod=true
             continue
         fi
 
         if [[ "${env_type}" == "prod" ]]; then
             requires_prod=true
         elif [[ "${env_type}" == "nonprod" ]]; then
-            requires_nonprod=true
+            requires_prod=true
+            requires_nonprod_workload=true
         fi
     done <<< "${cluster_list}"
 
     # Default to production creds if no explicit environment could be inferred.
-    if [[ "${requires_prod}" == "false" && "${requires_nonprod}" == "false" ]]; then
+    if [[ "${requires_prod}" == "false" && "${requires_nonprod_workload}" == "false" ]]; then
         requires_prod=true
     fi
 
     if [[ "${requires_prod}" == "true" ]]; then
-        if [[ -z "${VSPHERE_PROD_USERNAME:-}" ]]; then
-            echo -n "Enter vSphere PROD username: " >&2
-            read -r VSPHERE_PROD_USERNAME </dev/tty
-            if [[ -z "${VSPHERE_PROD_USERNAME}" ]]; then
-                error "PROD username cannot be empty"
+        if [[ -z "${AO_ACCOUNT_USERNAME:-}" ]]; then
+            echo -n "Enter AO account username: " >&2
+            read -r AO_ACCOUNT_USERNAME </dev/tty
+            if [[ -z "${AO_ACCOUNT_USERNAME}" ]]; then
+                error "AO account username cannot be empty"
                 return 1
             fi
-            export VSPHERE_PROD_USERNAME
+            export AO_ACCOUNT_USERNAME
         fi
 
-        if [[ -z "${VSPHERE_PROD_PASSWORD:-}" ]]; then
-            echo -n "Enter vSphere PROD password: " >&2
-            read -r -s VSPHERE_PROD_PASSWORD </dev/tty
+        if [[ -z "${AO_ACCOUNT_PASSWORD:-}" ]]; then
+            echo -n "Enter AO account password: " >&2
+            read -r -s AO_ACCOUNT_PASSWORD </dev/tty
             echo "" >&2
-            if [[ -z "${VSPHERE_PROD_PASSWORD}" ]]; then
-                error "PROD password cannot be empty"
+            if [[ -z "${AO_ACCOUNT_PASSWORD}" ]]; then
+                error "AO account password cannot be empty"
                 return 1
             fi
-            export VSPHERE_PROD_PASSWORD
+            export AO_ACCOUNT_PASSWORD
         fi
 
-        VSPHERE_PROD_CREDENTIALS_READY="true"
+        AO_ACCOUNT_CREDENTIALS_READY="true"
     fi
 
-    if [[ "${requires_nonprod}" == "true" ]]; then
-        if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" ]]; then
-            echo -n "Enter Non-Prod vSphere username: " >&2
-            read -r VSPHERE_NONPROD_USERNAME </dev/tty
-            if [[ -z "${VSPHERE_NONPROD_USERNAME}" ]]; then
-                error "Non-Prod username cannot be empty"
+    if [[ "${requires_nonprod_workload}" == "true" ]]; then
+        if [[ -z "${NONAO_ACCOUNT_USERNAME:-}" ]]; then
+            echo -n "Enter Non-AO account username: " >&2
+            read -r NONAO_ACCOUNT_USERNAME </dev/tty
+            if [[ -z "${NONAO_ACCOUNT_USERNAME}" ]]; then
+                error "Non-AO account username cannot be empty"
                 return 1
             fi
-            export VSPHERE_NONPROD_USERNAME
+            export NONAO_ACCOUNT_USERNAME
         fi
 
-        if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
-            echo -n "Enter Non-Prod vSphere password: " >&2
-            read -r -s VSPHERE_NONPROD_PASSWORD </dev/tty
+        if [[ -z "${NONAO_ACCOUNT_PASSWORD:-}" ]]; then
+            echo -n "Enter Non-AO account password: " >&2
+            read -r -s NONAO_ACCOUNT_PASSWORD </dev/tty
             echo "" >&2
-            if [[ -z "${VSPHERE_NONPROD_PASSWORD}" ]]; then
-                error "Non-Prod password cannot be empty"
+            if [[ -z "${NONAO_ACCOUNT_PASSWORD}" ]]; then
+                error "Non-AO account password cannot be empty"
                 return 1
             fi
-            export VSPHERE_NONPROD_PASSWORD
+            export NONAO_ACCOUNT_PASSWORD
         fi
 
-        VSPHERE_NONPROD_CREDENTIALS_READY="true"
+        NONAO_ACCOUNT_CREDENTIALS_READY="true"
     fi
 
     return 0
@@ -230,10 +218,20 @@ get_workload_credentials_for_cluster() {
     env=$(determine_environment "${cluster_name}")
 
     if [[ "${env}" == "prod" ]]; then
-        echo "${VSPHERE_PROD_USERNAME}|${VSPHERE_PROD_PASSWORD}"
+        echo "${AO_ACCOUNT_USERNAME}|${AO_ACCOUNT_PASSWORD}"
     else
-        echo "${VSPHERE_NONPROD_USERNAME}|${VSPHERE_NONPROD_PASSWORD}"
+        echo "${NONAO_ACCOUNT_USERNAME}|${NONAO_ACCOUNT_PASSWORD}"
     fi
+}
+
+get_supervisor_credentials_for_suffix() {
+    local suffix="$1"
+    if [[ -z "${AO_ACCOUNT_USERNAME:-}" || -z "${AO_ACCOUNT_PASSWORD:-}" ]]; then
+        error "Missing supervisor credentials for suffix '${suffix}'"
+        return 1
+    fi
+
+    echo "${AO_ACCOUNT_USERNAME}|${AO_ACCOUNT_PASSWORD}"
 }
 
 #===============================================================================
@@ -282,28 +280,17 @@ ensure_supervisor_session_for_suffix() {
         return 1
     fi
 
-    local env_type wl_user wl_password
-    env_type=$(determine_environment_from_flag "${suffix}")
-    if [[ "${env_type}" == "nonprod" ]]; then
-        wl_user="${VSPHERE_NONPROD_USERNAME:-}"
-        wl_password="${VSPHERE_NONPROD_PASSWORD:-}"
-        if [[ -z "${wl_user}" || -z "${wl_password}" ]]; then
-            error "Missing non-production vSphere credentials for supervisor suffix '${suffix}'"
-            return 1
-        fi
-    else
-        wl_user="${VSPHERE_PROD_USERNAME:-}"
-        wl_password="${VSPHERE_PROD_PASSWORD:-}"
-        if [[ -z "${wl_user}" || -z "${wl_password}" ]]; then
-            error "Missing production vSphere credentials for supervisor suffix '${suffix}'"
-            return 1
-        fi
+    local supervisor_creds sup_user sup_password
+    if ! supervisor_creds=$(get_supervisor_credentials_for_suffix "${suffix}"); then
+        return 1
     fi
+    sup_user=$(echo "${supervisor_creds}" | cut -d'|' -f1)
+    sup_password=$(echo "${supervisor_creds}" | cut -d'|' -f2-)
 
     local login_output
-    login_output=$(KUBECTL_VSPHERE_PASSWORD="${wl_password}" kubectl vsphere login \
+    login_output=$(KUBECTL_VSPHERE_PASSWORD="${sup_password}" kubectl vsphere login \
         --server "${supervisor}" \
-        --vsphere-username "${wl_user}" \
+        --vsphere-username "${sup_user}" \
         --insecure-skip-tls-verify 2>&1)
     local rc=$?
     if [[ ${rc} -ne 0 ]]; then
@@ -806,6 +793,7 @@ export -f test_kubeconfig_connectivity
 export -f ensure_vsphere_plugin
 export -f ensure_vsphere_credentials
 export -f get_workload_credentials_for_cluster
+export -f get_supervisor_credentials_for_suffix
 export -f get_supervisor_for_cluster
 export -f ensure_supervisor_session_for_suffix
 export -f get_cached_namespace_for_cluster

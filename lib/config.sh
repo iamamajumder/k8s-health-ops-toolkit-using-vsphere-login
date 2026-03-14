@@ -166,11 +166,11 @@ display_cluster_list() {
 # Load credentials from config file's ===CREDENTIALS=== section
 # Sets env vars only if not already set (env var takes priority)
 # Key mapping:
-#   VSPHERE_PROD_USERNAME      -> VSPHERE_PROD_USERNAME
-#   VSPHERE_PROD_PASSWORD      -> VSPHERE_PROD_PASSWORD
-#   VSPHERE_NONPROD_USERNAME   -> VSPHERE_NONPROD_USERNAME
-#   VSPHERE_NONPROD_PASSWORD   -> VSPHERE_NONPROD_PASSWORD
-# Legacy aliases accepted: NONPROD_USERNAME, NONPROD_PASSWORD
+#   AO_ACCOUNT_USERNAME        -> AO_ACCOUNT_USERNAME
+#   AO_ACCOUNT_PASSWORD        -> AO_ACCOUNT_PASSWORD
+#   NONAO_ACCOUNT_USERNAME     -> NONAO_ACCOUNT_USERNAME
+#   NONAO_ACCOUNT_PASSWORD     -> NONAO_ACCOUNT_PASSWORD
+# Hyphenated config keys are also accepted and normalized to shell-safe names.
 load_credentials() {
     local config_file="$1"
 
@@ -201,39 +201,38 @@ load_credentials() {
             value=$(echo "${value}" | xargs)
             [[ -z "${key}" || -z "${value}" ]] && continue
 
-            # Map config keys to env var names, set only if not already set.
-            # Supports NONPROD_* legacy aliases for backward compatibility.
+            # Map config keys to shell-safe env var names.
             case "${key}" in
-                VSPHERE_PROD_USERNAME)
-                    if [[ -z "${VSPHERE_PROD_USERNAME:-}" ]]; then
-                        export VSPHERE_PROD_USERNAME="${value}"
+                AO_ACCOUNT_USERNAME|AO-ACCOUNT_USERNAME)
+                    if [[ -z "${AO_ACCOUNT_USERNAME:-}" ]]; then
+                        export AO_ACCOUNT_USERNAME="${value}"
                         loaded=$((loaded + 1))
                     else
-                        debug "VSPHERE_PROD_USERNAME already set via env var, skipping input.conf value"
+                        debug "AO_ACCOUNT_USERNAME already set via env var, skipping input.conf value"
                     fi
                     ;;
-                VSPHERE_PROD_PASSWORD)
-                    if [[ -z "${VSPHERE_PROD_PASSWORD:-}" ]]; then
-                        export VSPHERE_PROD_PASSWORD="${value}"
+                AO_ACCOUNT_PASSWORD|AO-ACCOUNT_PASSWORD)
+                    if [[ -z "${AO_ACCOUNT_PASSWORD:-}" ]]; then
+                        export AO_ACCOUNT_PASSWORD="${value}"
                         loaded=$((loaded + 1))
                     else
-                        debug "VSPHERE_PROD_PASSWORD already set via env var, skipping input.conf value"
+                        debug "AO_ACCOUNT_PASSWORD already set via env var, skipping input.conf value"
                     fi
                     ;;
-                VSPHERE_NONPROD_USERNAME|NONPROD_USERNAME)
-                    if [[ -z "${VSPHERE_NONPROD_USERNAME:-}" ]]; then
-                        export VSPHERE_NONPROD_USERNAME="${value}"
+                NONAO_ACCOUNT_USERNAME|NONAO-ACCOUNT_USERNAME)
+                    if [[ -z "${NONAO_ACCOUNT_USERNAME:-}" ]]; then
+                        export NONAO_ACCOUNT_USERNAME="${value}"
                         loaded=$((loaded + 1))
                     else
-                        debug "VSPHERE_NONPROD_USERNAME already set via env var, skipping input.conf value"
+                        debug "NONAO_ACCOUNT_USERNAME already set via env var, skipping input.conf value"
                     fi
                     ;;
-                VSPHERE_NONPROD_PASSWORD|NONPROD_PASSWORD)
-                    if [[ -z "${VSPHERE_NONPROD_PASSWORD:-}" ]]; then
-                        export VSPHERE_NONPROD_PASSWORD="${value}"
+                NONAO_ACCOUNT_PASSWORD|NONAO-ACCOUNT_PASSWORD)
+                    if [[ -z "${NONAO_ACCOUNT_PASSWORD:-}" ]]; then
+                        export NONAO_ACCOUNT_PASSWORD="${value}"
                         loaded=$((loaded + 1))
                     else
-                        debug "VSPHERE_NONPROD_PASSWORD already set via env var, skipping input.conf value"
+                        debug "NONAO_ACCOUNT_PASSWORD already set via env var, skipping input.conf value"
                     fi
                     ;;
                 *)

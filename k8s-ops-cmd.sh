@@ -121,10 +121,10 @@ Examples (Management Discovery mode):
   $0 -m system-3 --sequential "kubectl version -o json | jq -r '.serverVersion.gitVersion'"
 
 Environment Variables:
-  VSPHERE_PROD_USERNAME        Production vSphere username (optional, prompt if unset)
-  VSPHERE_PROD_PASSWORD        Production vSphere password (optional, prompt if unset)
-  VSPHERE_NONPROD_USERNAME     Non-production vSphere username (optional)
-  VSPHERE_NONPROD_PASSWORD     Non-production vSphere password (optional)
+  AO_ACCOUNT_USERNAME          Used for all supervisor logins and prod workload logins
+  AO_ACCOUNT_PASSWORD          Used for all supervisor logins and prod workload logins
+  NONAO_ACCOUNT_USERNAME       Non-production workload-cluster username (optional)
+  NONAO_ACCOUNT_PASSWORD       Non-production workload-cluster password (optional)
   DEBUG                        Set to 'on' for verbose output
 
 EOF

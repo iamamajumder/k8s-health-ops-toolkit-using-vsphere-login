@@ -64,14 +64,18 @@ Key flags:
 - supervisor suffix to endpoint mapping
 - cluster names
 
+Credential behavior:
+- `AO_ACCOUNT_*` is used for all Supervisor logins and for production workload logins.
+- `NONAO_ACCOUNT_*` is used only for non-production workload logins.
+
 Example:
 
 ```ini
 # ===CREDENTIALS===
-# VSPHERE_PROD_USERNAME=prod-user
-# VSPHERE_PROD_PASSWORD=prod-pass
-# VSPHERE_NONPROD_USERNAME=nonprod-user
-# VSPHERE_NONPROD_PASSWORD=nonprod-pass
+# AO_ACCOUNT_USERNAME=supervisor-and-prod-user
+# AO_ACCOUNT_PASSWORD=supervisor-and-prod-pass
+# NONAO_ACCOUNT_USERNAME=nonprod-workload-user
+# NONAO_ACCOUNT_PASSWORD=nonprod-workload-pass
 # ===END_CREDENTIALS===
 
 # ===SUPERVISORS===
