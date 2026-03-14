@@ -37,6 +37,7 @@ logs/
 *~
 .DS_Store
 Thumbs.db
+input.conf
 
 # IDE Files
 .vscode/
